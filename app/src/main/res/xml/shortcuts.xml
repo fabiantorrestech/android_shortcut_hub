@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="toggle_shortcut_hub"
+        android:shortcutLongLabel="@string/shortcut_toggle_long_label"
+        android:shortcutShortLabel="@string/shortcut_toggle_short_label">
+        <intent
+            android:action="com.fabiantorrestech.androidshortcuthub.action.TOGGLE_OVERLAY"
+            android:targetClass="com.fabiantorrestech.androidshortcuthub.InvokeShortcutHubActivity"
+            android:targetPackage="com.fabiantorrestech.androidshortcuthub" />
+    </shortcut>
+</shortcuts>

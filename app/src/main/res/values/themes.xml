@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.ShortcutHub" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.ShortcutHub.Transparent" parent="android:Theme.Translucent.NoTitleBar" />
+</resources>

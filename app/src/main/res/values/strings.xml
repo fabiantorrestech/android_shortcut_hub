@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Shortcut Hub</string>
+    <string name="shortcut_toggle_short_label">Toggle Hub Overlay</string>
+    <string name="shortcut_toggle_long_label">Toggle Shortcut Hub Overlay</string>
+    <string name="overlay_permission_needed">Overlay permission is required before Shortcut Hub can appear on top of other apps.</string>
+    <string name="overlay_notification_channel_name">Shortcut Hub Overlay</string>
+    <string name="overlay_notification_title">Shortcut Hub overlay active</string>
+    <string name="overlay_notification_text">Tap your shortcut or intent again to dismiss the overlay.</string>
+</resources>
