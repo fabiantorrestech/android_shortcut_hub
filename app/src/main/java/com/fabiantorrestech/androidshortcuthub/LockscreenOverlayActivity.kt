@@ -8,8 +8,12 @@ import android.content.IntentFilter
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.OnBackPressedCallback
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.lifecycle.lifecycleScope
 import com.fabiantorrestech.androidshortcuthub.ui.theme.ShortcutHubTheme
@@ -22,6 +26,7 @@ import java.lang.ref.WeakReference
 
 class LockscreenOverlayActivity : ComponentActivity() {
     companion object {
+        private const val TAG = "LockscreenOverlay"
         private var instanceRef = WeakReference<LockscreenOverlayActivity>(null)
 
         val isActive: Boolean get() = instanceRef.get()?.let { !it.isFinishing } ?: false
@@ -41,22 +46,45 @@ class LockscreenOverlayActivity : ComponentActivity() {
         }
     }
 
+    private val systemUiDismissReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_CLOSE_SYSTEM_DIALOGS) {
+                @Suppress("DEPRECATION")
+                val reason = intent.getStringExtra("reason") ?: ""
+                if (reason == "homekey" || reason == "recentapps") finish()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instanceRef = WeakReference(this)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
         registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        registerReceiver(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    finish()
+                }
+            },
+        )
 
         lifecycleScope.launch {
+            val startMs = SystemClock.elapsedRealtime()
+            val stateStartMs = SystemClock.elapsedRealtime()
             val initialState = withContext(Dispatchers.IO) { loadOverlayState() }
+            val stateElapsedMs = SystemClock.elapsedRealtime() - stateStartMs
 
+            val fontStartMs = SystemClock.elapsedRealtime()
             val preloadedFonts: Map<String, FontFamily?> = withContext(Dispatchers.IO) {
-                buildSet<String> {
-                    initialState.defaultFontUri?.let { add(it) }
-                    initialState.tiles.forEach { it.customFontUri?.let { uri -> add(uri) } }
-                }.associateWith { uri -> loadFontFamily(uri) }
+                OverlayRuntimeCache.preloadFonts(initialState, ::loadFontFamily)
             }
+            val fontElapsedMs = SystemClock.elapsedRealtime() - fontStartMs
 
             if (isFinishing) return@launch
 
@@ -66,12 +94,22 @@ class LockscreenOverlayActivity : ComponentActivity() {
                         initialState = initialState,
                         preloadedFonts = preloadedFonts,
                         tileFontEvents = ShortcutHubOverlayService.tileFontSelectionEvents(),
+                        tileIconEvents = ShortcutHubOverlayService.tileIconSelectionEvents(),
+                        tileInsertionEvents = BindWidgetActivity.tileInsertionEvents(),
                         loadLaunchableApps = ::loadLaunchableApps,
                         resolveCustomPackage = ::resolveCustomPackage,
                         loadFontFamily = ::loadFontFamily,
                         openTileFontPicker = { tileId ->
                             startActivity(
                                 PickTileFontActivity.createIntent(
+                                    this@LockscreenOverlayActivity,
+                                    tileId,
+                                ),
+                            )
+                        },
+                        openTileIconPicker = { tileId ->
+                            startActivity(
+                                PickTileIconActivity.createIntent(
                                     this@LockscreenOverlayActivity,
                                     tileId,
                                 ),
@@ -84,11 +122,17 @@ class LockscreenOverlayActivity : ComponentActivity() {
                     )
                 }
             }
+            Log.d(
+                TAG,
+                "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms " +
+                    "(state=${stateElapsedMs}ms, fonts=${fontElapsedMs}ms)",
+            )
         }
     }
 
     override fun onDestroy() {
         unregisterReceiver(screenOffReceiver)
+        unregisterReceiver(systemUiDismissReceiver)
         if (instanceRef.get() == this) instanceRef = WeakReference(null)
         super.onDestroy()
     }
@@ -109,18 +153,21 @@ class LockscreenOverlayActivity : ComponentActivity() {
             gridRows = config.gridRows,
             gridColumns = config.gridColumns,
             defaultTextScale = config.defaultTextScale,
+            defaultBoldText = config.defaultBoldText,
             defaultFontUri = config.defaultFontUri,
             defaultFontName = config.defaultFontName,
             defaultTextColorMode = config.defaultTextColorMode,
             defaultTextColorHex = config.defaultTextColorHex,
             hapticFeedbackEnabled = config.hapticFeedbackEnabled,
             panelHandleLocked = config.panelHandleLocked,
+            showPanelHandle = config.showPanelHandle,
             overlayBackgroundAlpha = config.overlayBackgroundAlpha,
             showOverLockscreen = config.showOverLockscreen,
         )
         val raw = prefs.getString(OVERLAY_PREFS_KEY_STATE, null) ?: return defaultState
 
-        return runCatching {
+        return OverlayRuntimeCache.getOrLoadState(raw, config) {
+            runCatching {
             val root = JSONObject(raw)
             val tilesArray = root.optJSONArray("tiles") ?: JSONArray()
             val tiles = buildList<TileState> {
@@ -138,8 +185,68 @@ class LockscreenOverlayActivity : ComponentActivity() {
                         item.getDouble("customTextScale").toFloat()
                             .coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
                     } else null
+                    val customBoldText = if (item.has("customBoldText")) {
+                        item.getBoolean("customBoldText")
+                    } else {
+                        null
+                    }
 
                     when (item.optString("type", TILE_TYPE_APP)) {
+                        TILE_TYPE_WIDGET -> {
+                            val appWidgetId = item.optInt("appWidgetId", -1)
+                            val providerComponent = item.optString("providerComponent").takeIf { it.isNotBlank() }
+                            if (appWidgetId < 0 || providerComponent == null) continue
+                            add(
+                                WidgetTileState(
+                                    id = id,
+                                    row = row,
+                                    column = column,
+                                    rowSpan = rowSpan,
+                                    columnSpan = columnSpan,
+                                    appWidgetId = appWidgetId,
+                                    providerComponent = providerComponent,
+                                    customLabel = customLabel,
+                                ),
+                            )
+                        }
+                        TILE_TYPE_SYSTEM_SLIDER -> {
+                            val sliderType = SliderType.entries.firstOrNull {
+                                it.name == item.optString("sliderType")
+                            } ?: continue
+                            val streamMode = StreamMode.entries.firstOrNull {
+                                it.name == item.optString("streamMode", StreamMode.DEFAULT.name)
+                            } ?: StreamMode.DEFAULT
+                            val singleStream = AudioStreamType.entries.firstOrNull {
+                                it.name == item.optString("singleStream", AudioStreamType.MUSIC.name)
+                            } ?: AudioStreamType.MUSIC
+                            val buttonPlacement = SliderButtonPlacement.entries.firstOrNull {
+                                it.name == item.optString("buttonPlacement", SliderButtonPlacement.SPLIT.name)
+                            } ?: SliderButtonPlacement.SPLIT
+                            val notchMode = SliderNotchMode.entries.firstOrNull {
+                                it.name == item.optString("notchMode", SliderNotchMode.LOCK_AND_SLIDE.name)
+                            } ?: SliderNotchMode.LOCK_AND_SLIDE
+                            val showNotches = item.optBoolean("showNotches", true)
+                            val buttonStepSize = item.optInt("buttonStepSize", 1)
+                            add(
+                                SystemSliderTileState(
+                                    id = id,
+                                    row = row,
+                                    column = column,
+                                    rowSpan = rowSpan,
+                                    columnSpan = columnSpan,
+                                    config = SystemSliderConfig(
+                                        sliderType = sliderType,
+                                        streamMode = streamMode,
+                                        singleStream = singleStream,
+                                        buttonPlacement = buttonPlacement,
+                                        notchMode = notchMode,
+                                        showNotches = showNotches,
+                                        buttonStepSize = buttonStepSize,
+                                    ),
+                                    customLabel = customLabel,
+                                ),
+                            )
+                        }
                         TILE_TYPE_INTENT -> {
                             val action = item.optString("intentAction").takeIf { it.isNotBlank() }
                                 ?: continue
@@ -167,13 +274,16 @@ class LockscreenOverlayActivity : ComponentActivity() {
                                     customFontUri = customFontUri,
                                     customFontName = customFontName,
                                     customTextScale = customTextScale,
+                                    customBoldText = customBoldText,
                                 ),
                             )
                         }
                         else -> {
-                            val component = ComponentName.unflattenFromString(
-                                item.getString("component"),
-                            ) ?: continue
+                            val component = item.optString("component").takeIf { it.isNotBlank() }
+                                ?.let(ComponentName::unflattenFromString)
+                            val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
+                            val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
+                            if (component == null && launchIntentUri == null) continue
                             add(
                                 AppTileState(
                                     id = id,
@@ -184,11 +294,15 @@ class LockscreenOverlayActivity : ComponentActivity() {
                                     app = LaunchableApp(
                                         label = item.getString("label"),
                                         componentName = component,
+                                        launchIntentUri = launchIntentUri,
+                                        launchIntentPackage = launchIntentPackage,
                                     ),
+                                    iconConfig = parseAppTileIconConfig(item),
                                     customLabel = customLabel,
                                     customFontUri = customFontUri,
                                     customFontName = customFontName,
                                     customTextScale = customTextScale,
+                                    customBoldText = customBoldText,
                                 ),
                             )
                         }
@@ -212,16 +326,19 @@ class LockscreenOverlayActivity : ComponentActivity() {
                 gridRows = config.gridRows,
                 gridColumns = config.gridColumns,
                 defaultTextScale = config.defaultTextScale,
+                defaultBoldText = config.defaultBoldText,
                 defaultFontUri = config.defaultFontUri,
                 defaultFontName = config.defaultFontName,
                 defaultTextColorMode = config.defaultTextColorMode,
                 defaultTextColorHex = config.defaultTextColorHex,
                 hapticFeedbackEnabled = config.hapticFeedbackEnabled,
                 panelHandleLocked = config.panelHandleLocked,
+                showPanelHandle = config.showPanelHandle,
                 overlayBackgroundAlpha = config.overlayBackgroundAlpha,
                 showOverLockscreen = config.showOverLockscreen,
             )
-        }.getOrDefault(defaultState)
+            }.getOrDefault(defaultState)
+        }
     }
 
     private fun saveOverlayState(state: OverlayUiState) {
@@ -247,11 +364,30 @@ class LockscreenOverlayActivity : ComponentActivity() {
                                 tile.customFontUri?.let { put("customFontUri", it) }
                                 tile.customFontName?.let { put("customFontName", it) }
                                 tile.customTextScale?.let { put("customTextScale", it.toDouble()) }
+                                tile.customBoldText?.let { put("customBoldText", it) }
                                 when (tile) {
                                     is AppTileState -> {
                                         put("type", TILE_TYPE_APP)
                                         put("label", tile.app.label)
-                                        put("component", tile.app.componentName.flattenToString())
+                                        tile.app.componentName?.let { put("component", it.flattenToString()) }
+                                        tile.app.launchIntentUri?.let { put("launchIntentUri", it) }
+                                        tile.app.launchIntentPackage?.let { put("launchIntentPackage", it) }
+                                        putAppTileIconConfig(tile.iconConfig)
+                                    }
+                                    is WidgetTileState -> {
+                                        put("type", TILE_TYPE_WIDGET)
+                                        put("appWidgetId", tile.appWidgetId)
+                                        put("providerComponent", tile.providerComponent)
+                                    }
+                                    is SystemSliderTileState -> {
+                                        put("type", TILE_TYPE_SYSTEM_SLIDER)
+                                        put("sliderType", tile.config.sliderType.name)
+                                        put("streamMode", tile.config.streamMode.name)
+                                        put("singleStream", tile.config.singleStream.name)
+                                        put("buttonPlacement", tile.config.buttonPlacement.name)
+                                        put("notchMode", tile.config.notchMode.name)
+                                        put("showNotches", tile.config.showNotches)
+                                        put("buttonStepSize", tile.config.buttonStepSize)
                                     }
                                     is IntentTileState -> {
                                         put("type", TILE_TYPE_INTENT)
@@ -277,14 +413,16 @@ class LockscreenOverlayActivity : ComponentActivity() {
             )
         }
 
+        val serialized = root.toString()
         getSharedPreferences(OVERLAY_PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(OVERLAY_PREFS_KEY_STATE, root.toString())
+            .putString(OVERLAY_PREFS_KEY_STATE, serialized)
             .apply()
+        OverlayRuntimeCache.updateState(serialized, ShortcutHubSettings.load(this), state)
     }
 
     private fun loadLaunchableApps(): List<LaunchableApp> =
-        packageManager.getInstalledApplications(0)
+        (packageManager.getInstalledApplications(0)
             .mapNotNull { appInfo ->
                 val launchIntent = packageManager.getLaunchIntentForPackage(appInfo.packageName)
                     ?: return@mapNotNull null
@@ -294,15 +432,27 @@ class LockscreenOverlayActivity : ComponentActivity() {
                         .ifBlank { appInfo.packageName },
                     componentName = component,
                 )
-            }
-            .distinctBy { it.packageName }
+            } + loadLauncherWebShortcuts())
+            .distinctBy { "${it.label}|${it.packageName}|${it.componentName?.flattenToString().orEmpty()}|${it.launchIntentUri.orEmpty()}" }
             .sortedBy { it.label.lowercase() }
 
     private fun launchApp(app: LaunchableApp) {
+        val component = app.componentName
+        if (component != null) {
+            startActivity(
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    this.component = component
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                },
+            )
+            return
+        }
+
+        val launchUri = app.launchIntentUri ?: return
         startActivity(
-            Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-                component = app.componentName
+            Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
+                app.launchIntentPackage?.let { setPackage(it) }
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             },
         )
@@ -353,5 +503,31 @@ class LockscreenOverlayActivity : ComponentActivity() {
                 resolveInfo.activityInfo.name,
             ),
         )
+    }
+
+    private fun loadLauncherWebShortcuts(): List<LaunchableApp> {
+        val contentUri = Uri.parse("content://app.cclauncher.shortcuts/pinned")
+        return runCatching {
+            contentResolver.query(contentUri, null, null, null, null)?.use { cursor ->
+                val labelIndex = cursor.getColumnIndex("label")
+                val urlIndex = cursor.getColumnIndex("url")
+                val browserPackageIndex = cursor.getColumnIndex("browser_package")
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val label = cursor.getString(labelIndex)?.trim().orEmpty()
+                        val url = cursor.getString(urlIndex)?.trim().orEmpty()
+                        val browserPackage = cursor.getString(browserPackageIndex)?.trim().orEmpty()
+                        if (label.isEmpty() || url.isEmpty()) continue
+                        add(
+                            LaunchableApp(
+                                label = label,
+                                launchIntentUri = url,
+                                launchIntentPackage = browserPackage.ifBlank { null },
+                            ),
+                        )
+                    }
+                }
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
     }
 }

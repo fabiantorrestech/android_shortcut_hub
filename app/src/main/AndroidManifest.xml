@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
     <queries>
         <intent>
@@ -12,6 +13,7 @@
     </queries>
 
     <application
+        android:name=".ShortcutHubApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -55,6 +57,21 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.ShortcutHub.Transparent" />
+
+        <activity
+            android:name=".PickTileIconActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ShortcutHub.Transparent" />
+
+        <activity
+            android:name=".BindWidgetActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ShortcutHub" />
 
         <activity
             android:name=".LockscreenOverlayActivity"

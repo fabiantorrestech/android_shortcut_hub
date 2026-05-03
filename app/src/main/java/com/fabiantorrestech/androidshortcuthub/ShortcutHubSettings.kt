@@ -4,16 +4,18 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val SETTINGS_PREFS_NAME = "shortcut_hub_settings"
+internal const val SETTINGS_PREFS_NAME = "shortcut_hub_settings"
 private const val KEY_GRID_ROWS = "grid_rows"
 private const val KEY_GRID_COLUMNS = "grid_columns"
 private const val KEY_DEFAULT_TEXT_SCALE = "default_text_scale"
+private const val KEY_DEFAULT_BOLD_TEXT = "default_bold_text"
 private const val KEY_DEFAULT_FONT_URI = "default_font_uri"
 private const val KEY_DEFAULT_FONT_NAME = "default_font_name"
 private const val KEY_DEFAULT_TEXT_COLOR_MODE = "default_text_color_mode"
 private const val KEY_DEFAULT_TEXT_COLOR_HEX = "default_text_color_hex"
 private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
 private const val KEY_PANEL_HANDLE_LOCKED = "panel_handle_locked"
+private const val KEY_SHOW_PANEL_HANDLE = "show_panel_handle"
 private const val KEY_OVERLAY_BG_ALPHA = "overlay_bg_alpha"
 private const val KEY_SHOW_OVER_LOCKSCREEN = "show_over_lockscreen"
 private const val KEY_DISMISS_ACCESSIBILITY_BANNER = "dismiss_accessibility_banner"
@@ -31,12 +33,14 @@ data class ShortcutHubConfig(
     val gridRows: Int = 8,
     val gridColumns: Int = 4,
     val defaultTextScale: Float = 1.0f,
+    val defaultBoldText: Boolean = false,
     val defaultFontUri: String? = null,
     val defaultFontName: String? = null,
     val defaultTextColorMode: DefaultTextColorMode = DefaultTextColorMode.SYSTEM,
     val defaultTextColorHex: String? = null,
     val hapticFeedbackEnabled: Boolean = true,
     val panelHandleLocked: Boolean = false,
+    val showPanelHandle: Boolean = true,
     val overlayBackgroundAlpha: Float = 0.33f,
     val showOverLockscreen: Boolean = false,
     val dismissAccessibilityBanner: Boolean = false,
@@ -51,6 +55,7 @@ object ShortcutHubSettings {
             gridRows = prefs.getInt(KEY_GRID_ROWS, 8).coerceIn(1, 24),
             gridColumns = prefs.getInt(KEY_GRID_COLUMNS, 4).coerceIn(1, 16),
             defaultTextScale = prefs.getFloat(KEY_DEFAULT_TEXT_SCALE, 1.0f).coerceIn(0.5f, 3.0f),
+            defaultBoldText = prefs.getBoolean(KEY_DEFAULT_BOLD_TEXT, false),
             defaultFontUri = prefs.getString(KEY_DEFAULT_FONT_URI, null),
             defaultFontName = prefs.getString(KEY_DEFAULT_FONT_NAME, null),
             defaultTextColorMode = prefs.getString(
@@ -62,6 +67,7 @@ object ShortcutHubSettings {
             defaultTextColorHex = normalizeHexColor(prefs.getString(KEY_DEFAULT_TEXT_COLOR_HEX, null)),
             hapticFeedbackEnabled = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true),
             panelHandleLocked = prefs.getBoolean(KEY_PANEL_HANDLE_LOCKED, false),
+            showPanelHandle = prefs.getBoolean(KEY_SHOW_PANEL_HANDLE, true),
             overlayBackgroundAlpha = prefs.getFloat(KEY_OVERLAY_BG_ALPHA, 0.33f).coerceIn(0f, 0.9f),
             showOverLockscreen = prefs.getBoolean(KEY_SHOW_OVER_LOCKSCREEN, false),
             dismissAccessibilityBanner = prefs.getBoolean(KEY_DISMISS_ACCESSIBILITY_BANNER, false),
@@ -76,12 +82,14 @@ object ShortcutHubSettings {
             .putInt(KEY_GRID_ROWS, config.gridRows.coerceIn(1, 24))
             .putInt(KEY_GRID_COLUMNS, config.gridColumns.coerceIn(1, 16))
             .putFloat(KEY_DEFAULT_TEXT_SCALE, config.defaultTextScale.coerceIn(0.5f, 3.0f))
+            .putBoolean(KEY_DEFAULT_BOLD_TEXT, config.defaultBoldText)
             .putString(KEY_DEFAULT_FONT_URI, config.defaultFontUri)
             .putString(KEY_DEFAULT_FONT_NAME, config.defaultFontName)
             .putString(KEY_DEFAULT_TEXT_COLOR_MODE, config.defaultTextColorMode.name)
             .putString(KEY_DEFAULT_TEXT_COLOR_HEX, normalizeHexColor(config.defaultTextColorHex))
             .putBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, config.hapticFeedbackEnabled)
             .putBoolean(KEY_PANEL_HANDLE_LOCKED, config.panelHandleLocked)
+            .putBoolean(KEY_SHOW_PANEL_HANDLE, config.showPanelHandle)
             .putFloat(KEY_OVERLAY_BG_ALPHA, config.overlayBackgroundAlpha.coerceIn(0f, 0.9f))
             .putBoolean(KEY_SHOW_OVER_LOCKSCREEN, config.showOverLockscreen)
             .putBoolean(KEY_DISMISS_ACCESSIBILITY_BANNER, config.dismissAccessibilityBanner)

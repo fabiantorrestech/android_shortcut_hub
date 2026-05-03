@@ -11,7 +11,9 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.ui.platform.ComposeView
@@ -40,7 +42,15 @@ class ShortcutHubOverlayService : Service() {
     companion object {
         const val ACTION_TOGGLE_OVERLAY =
             "com.fabiantorrestech.androidshortcuthub.action.TOGGLE_OVERLAY"
+        const val ACTION_PREWARM_OVERLAY =
+            "com.fabiantorrestech.androidshortcuthub.action.PREWARM_OVERLAY"
+        private const val TAG = "ShortcutHubOverlay"
         private val tileFontResults = MutableSharedFlow<TileFontSelection>(extraBufferCapacity = 1)
+        private val tileIconResults = MutableSharedFlow<TileIconSelection>(extraBufferCapacity = 1)
+
+        @Volatile
+        var isRunning: Boolean = false
+            private set
 
         fun canDrawOverlays(context: Context): Boolean =
             Settings.canDrawOverlays(context)
@@ -53,17 +63,32 @@ class ShortcutHubOverlayService : Service() {
             )
         }
 
+        fun prewarm(context: Context) {
+            context.startService(
+                Intent(context, ShortcutHubOverlayService::class.java).apply {
+                    action = ACTION_PREWARM_OVERLAY
+                },
+            )
+        }
+
         fun dispatchTileFontPicked(tileId: Int, uriString: String, fontName: String) {
             tileFontResults.tryEmit(TileFontSelection(tileId, uriString, fontName))
         }
 
         fun tileFontSelectionEvents(): MutableSharedFlow<TileFontSelection> = tileFontResults
+
+        fun dispatchTileIconPicked(tileId: Int, uriString: String, iconName: String) {
+            tileIconResults.tryEmit(TileIconSelection(tileId, uriString, iconName))
+        }
+
+        fun tileIconSelectionEvents(): MutableSharedFlow<TileIconSelection> = tileIconResults
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var isShowingOverlay = false
     private lateinit var windowManager: WindowManager
     private var overlayView: ComposeView? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
 
     private val screenOffReceiver = object : BroadcastReceiver() {
@@ -72,26 +97,40 @@ class ShortcutHubOverlayService : Service() {
                 ShortcutHubSettings.load(context).dismissOnScreenOff
             ) {
                 dismissOverlay()
-                stopSelf()
+            }
+        }
+    }
+
+    private val systemUiDismissReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_CLOSE_SYSTEM_DIALOGS) {
+                @Suppress("DEPRECATION")
+                val reason = intent.getStringExtra("reason") ?: ""
+                if (reason == "homekey" || reason == "recentapps") dismissOverlay()
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        registerReceiver(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_TOGGLE_OVERLAY) {
             ACTION_TOGGLE_OVERLAY -> toggleOverlay()
+            ACTION_PREWARM_OVERLAY -> Unit
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onDestroy() {
+        isRunning = false
         unregisterReceiver(screenOffReceiver)
+        unregisterReceiver(systemUiDismissReceiver)
         serviceScope.cancel()
         dismissOverlay()
         super.onDestroy()
@@ -104,7 +143,6 @@ class ShortcutHubOverlayService : Service() {
             showOverlay()
         } else {
             dismissOverlay()
-            stopSelf()
         }
     }
 
@@ -113,16 +151,18 @@ class ShortcutHubOverlayService : Service() {
         isShowingOverlay = true
 
         serviceScope.launch {
+            val startMs = SystemClock.elapsedRealtime()
             try {
+                val stateStartMs = SystemClock.elapsedRealtime()
                 val initialState = loadOverlayState()
+                val stateElapsedMs = SystemClock.elapsedRealtime() - stateStartMs
 
                 // Preload every font URI before first render so tiles appear with the correct font immediately.
+                val fontStartMs = SystemClock.elapsedRealtime()
                 val preloadedFonts: Map<String, FontFamily?> = withContext(Dispatchers.IO) {
-                    buildSet<String> {
-                        initialState.defaultFontUri?.let { add(it) }
-                        initialState.tiles.forEach { it.customFontUri?.let { uri -> add(uri) } }
-                    }.associateWith { uri -> loadFontFamily(uri) }
+                    OverlayRuntimeCache.preloadFonts(initialState, ::loadFontFamily)
                 }
+                val fontElapsedMs = SystemClock.elapsedRealtime() - fontStartMs
 
                 val lifecycleOwner = OverlayLifecycleOwner().also {
                     it.start()
@@ -139,6 +179,8 @@ class ShortcutHubOverlayService : Service() {
                                 initialState = initialState,
                                 preloadedFonts = preloadedFonts,
                                 tileFontEvents = tileFontSelectionEvents(),
+                                tileIconEvents = tileIconSelectionEvents(),
+                                tileInsertionEvents = BindWidgetActivity.tileInsertionEvents(),
                                 loadLaunchableApps = ::loadLaunchableApps,
                                 resolveCustomPackage = ::resolveCustomPackage,
                                 loadFontFamily = ::loadFontFamily,
@@ -150,12 +192,29 @@ class ShortcutHubOverlayService : Service() {
                                         ),
                                     )
                                 },
+                                openTileIconPicker = { tileId ->
+                                    startActivity(
+                                        PickTileIconActivity.createIntent(
+                                            this@ShortcutHubOverlayService,
+                                            tileId,
+                                        ),
+                                    )
+                                },
                                 launchApp = ::launchApp,
                                 launchIntent = ::launchIntent,
                                 onPersist = ::saveOverlayState,
-                                onDismiss = {
-                                    dismissOverlay()
-                                    stopSelf()
+                                onDismiss = { dismissOverlay() },
+                                onKeyboardInputToggle = { needsKeyboard ->
+                                    val p = overlayParams ?: return@OverlayContent
+                                    val v = overlayView ?: return@OverlayContent
+                                    @Suppress("DEPRECATION")
+                                    p.softInputMode = if (needsKeyboard) {
+                                        WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+                                            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                                    } else {
+                                        0
+                                    }
+                                    if (v.isAttachedToWindow) windowManager.updateViewLayout(v, p)
                                 },
                             )
                         }
@@ -171,9 +230,12 @@ class ShortcutHubOverlayService : Service() {
 
                 @Suppress("DEPRECATION")
                 val windowFlags = if (initialState.showOverLockscreen) {
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                         WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                } else 0
+                } else {
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                }
 
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -186,7 +248,13 @@ class ShortcutHubOverlayService : Service() {
                 }
 
                 overlayView = composeView
+                overlayParams = params
                 windowManager.addView(composeView, params)
+                Log.d(
+                    TAG,
+                    "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms " +
+                        "(state=${stateElapsedMs}ms, fonts=${fontElapsedMs}ms, warm=$isRunning)",
+                )
             } finally {
                 isShowingOverlay = false
             }
@@ -196,12 +264,13 @@ class ShortcutHubOverlayService : Service() {
     private fun dismissOverlay() {
         overlayLifecycleOwner?.destroy()
         overlayLifecycleOwner = null
-        overlayView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        overlayView?.let { if (it.isAttachedToWindow) windowManager.removeViewImmediate(it) }
         overlayView = null
+        overlayParams = null
     }
 
     private fun loadLaunchableApps(): List<LaunchableApp> =
-        packageManager.getInstalledApplications(0)
+        (packageManager.getInstalledApplications(0)
             .mapNotNull { appInfo ->
                 val launchIntent = packageManager.getLaunchIntentForPackage(appInfo.packageName)
                     ?: return@mapNotNull null
@@ -211,15 +280,27 @@ class ShortcutHubOverlayService : Service() {
                         .ifBlank { appInfo.packageName },
                     componentName = component,
                 )
-            }
-            .distinctBy { it.packageName }
+            } + loadLauncherWebShortcuts())
+            .distinctBy { "${it.label}|${it.packageName}|${it.componentName?.flattenToString().orEmpty()}|${it.launchIntentUri.orEmpty()}" }
             .sortedBy { it.label.lowercase() }
 
     private fun launchApp(app: LaunchableApp) {
+        val component = app.componentName
+        if (component != null) {
+            startActivity(
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    this.component = component
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                },
+            )
+            return
+        }
+
+        val launchUri = app.launchIntentUri ?: return
         startActivity(
-            Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-                component = app.componentName
+            Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
+                app.launchIntentPackage?.let { setPackage(it) }
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             },
         )
@@ -272,6 +353,32 @@ class ShortcutHubOverlayService : Service() {
         )
     }
 
+    private fun loadLauncherWebShortcuts(): List<LaunchableApp> {
+        val contentUri = Uri.parse("content://app.cclauncher.shortcuts/pinned")
+        return runCatching {
+            contentResolver.query(contentUri, null, null, null, null)?.use { cursor ->
+                val labelIndex = cursor.getColumnIndex("label")
+                val urlIndex = cursor.getColumnIndex("url")
+                val browserPackageIndex = cursor.getColumnIndex("browser_package")
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val label = cursor.getString(labelIndex)?.trim().orEmpty()
+                        val url = cursor.getString(urlIndex)?.trim().orEmpty()
+                        val browserPackage = cursor.getString(browserPackageIndex)?.trim().orEmpty()
+                        if (label.isEmpty() || url.isEmpty()) continue
+                        add(
+                            LaunchableApp(
+                                label = label,
+                                launchIntentUri = url,
+                                launchIntentPackage = browserPackage.ifBlank { null },
+                            ),
+                        )
+                    }
+                }
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
     internal fun loadFontFamily(uriString: String?): FontFamily? {
         val parsedUri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return null
         return runCatching {
@@ -288,18 +395,21 @@ class ShortcutHubOverlayService : Service() {
             gridRows = config.gridRows,
             gridColumns = config.gridColumns,
             defaultTextScale = config.defaultTextScale,
+            defaultBoldText = config.defaultBoldText,
             defaultFontUri = config.defaultFontUri,
             defaultFontName = config.defaultFontName,
             defaultTextColorMode = config.defaultTextColorMode,
             defaultTextColorHex = config.defaultTextColorHex,
             hapticFeedbackEnabled = config.hapticFeedbackEnabled,
             panelHandleLocked = config.panelHandleLocked,
+            showPanelHandle = config.showPanelHandle,
             overlayBackgroundAlpha = config.overlayBackgroundAlpha,
             showOverLockscreen = config.showOverLockscreen,
         )
         val raw = prefs.getString(OVERLAY_PREFS_KEY_STATE, null) ?: return defaultState
 
-        return runCatching {
+        return OverlayRuntimeCache.getOrLoadState(raw, config) {
+            runCatching {
             val root = JSONObject(raw)
             val tilesArray = root.optJSONArray("tiles") ?: JSONArray()
             val tiles = buildList<TileState> {
@@ -317,8 +427,68 @@ class ShortcutHubOverlayService : Service() {
                         item.getDouble("customTextScale").toFloat()
                             .coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
                     } else null
+                    val customBoldText = if (item.has("customBoldText")) {
+                        item.getBoolean("customBoldText")
+                    } else {
+                        null
+                    }
 
                     when (item.optString("type", TILE_TYPE_APP)) {
+                        TILE_TYPE_WIDGET -> {
+                            val appWidgetId = item.optInt("appWidgetId", -1)
+                            val providerComponent = item.optString("providerComponent").takeIf { it.isNotBlank() }
+                            if (appWidgetId < 0 || providerComponent == null) continue
+                            add(
+                                WidgetTileState(
+                                    id = id,
+                                    row = row,
+                                    column = column,
+                                    rowSpan = rowSpan,
+                                    columnSpan = columnSpan,
+                                    appWidgetId = appWidgetId,
+                                    providerComponent = providerComponent,
+                                    customLabel = customLabel,
+                                ),
+                            )
+                        }
+                        TILE_TYPE_SYSTEM_SLIDER -> {
+                            val sliderType = SliderType.entries.firstOrNull {
+                                it.name == item.optString("sliderType")
+                            } ?: continue
+                            val streamMode = StreamMode.entries.firstOrNull {
+                                it.name == item.optString("streamMode", StreamMode.DEFAULT.name)
+                            } ?: StreamMode.DEFAULT
+                            val singleStream = AudioStreamType.entries.firstOrNull {
+                                it.name == item.optString("singleStream", AudioStreamType.MUSIC.name)
+                            } ?: AudioStreamType.MUSIC
+                            val buttonPlacement = SliderButtonPlacement.entries.firstOrNull {
+                                it.name == item.optString("buttonPlacement", SliderButtonPlacement.SPLIT.name)
+                            } ?: SliderButtonPlacement.SPLIT
+                            val notchMode = SliderNotchMode.entries.firstOrNull {
+                                it.name == item.optString("notchMode", SliderNotchMode.LOCK_AND_SLIDE.name)
+                            } ?: SliderNotchMode.LOCK_AND_SLIDE
+                            val showNotches = item.optBoolean("showNotches", true)
+                            val buttonStepSize = item.optInt("buttonStepSize", 1)
+                            add(
+                                SystemSliderTileState(
+                                    id = id,
+                                    row = row,
+                                    column = column,
+                                    rowSpan = rowSpan,
+                                    columnSpan = columnSpan,
+                                    config = SystemSliderConfig(
+                                        sliderType = sliderType,
+                                        streamMode = streamMode,
+                                        singleStream = singleStream,
+                                        buttonPlacement = buttonPlacement,
+                                        notchMode = notchMode,
+                                        showNotches = showNotches,
+                                        buttonStepSize = buttonStepSize,
+                                    ),
+                                    customLabel = customLabel,
+                                ),
+                            )
+                        }
                         TILE_TYPE_INTENT -> {
                             val action = item.optString("intentAction").takeIf { it.isNotBlank() }
                                 ?: continue
@@ -346,13 +516,16 @@ class ShortcutHubOverlayService : Service() {
                                     customFontUri = customFontUri,
                                     customFontName = customFontName,
                                     customTextScale = customTextScale,
+                                    customBoldText = customBoldText,
                                 ),
                             )
                         }
                         else -> {
-                            val component = ComponentName.unflattenFromString(
-                                item.getString("component"),
-                            ) ?: continue
+                            val component = item.optString("component").takeIf { it.isNotBlank() }
+                                ?.let(ComponentName::unflattenFromString)
+                            val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
+                            val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
+                            if (component == null && launchIntentUri == null) continue
                             add(
                                 AppTileState(
                                     id = id,
@@ -363,11 +536,15 @@ class ShortcutHubOverlayService : Service() {
                                     app = LaunchableApp(
                                         label = item.getString("label"),
                                         componentName = component,
+                                        launchIntentUri = launchIntentUri,
+                                        launchIntentPackage = launchIntentPackage,
                                     ),
+                                    iconConfig = parseAppTileIconConfig(item),
                                     customLabel = customLabel,
                                     customFontUri = customFontUri,
                                     customFontName = customFontName,
                                     customTextScale = customTextScale,
+                                    customBoldText = customBoldText,
                                 ),
                             )
                         }
@@ -391,16 +568,19 @@ class ShortcutHubOverlayService : Service() {
                 gridRows = config.gridRows,
                 gridColumns = config.gridColumns,
                 defaultTextScale = config.defaultTextScale,
+                defaultBoldText = config.defaultBoldText,
                 defaultFontUri = config.defaultFontUri,
                 defaultFontName = config.defaultFontName,
                 defaultTextColorMode = config.defaultTextColorMode,
                 defaultTextColorHex = config.defaultTextColorHex,
                 hapticFeedbackEnabled = config.hapticFeedbackEnabled,
                 panelHandleLocked = config.panelHandleLocked,
+                showPanelHandle = config.showPanelHandle,
                 overlayBackgroundAlpha = config.overlayBackgroundAlpha,
                 showOverLockscreen = config.showOverLockscreen,
             )
-        }.getOrDefault(defaultState)
+            }.getOrDefault(defaultState)
+        }
     }
 
     internal fun saveOverlayState(state: OverlayUiState) {
@@ -426,11 +606,30 @@ class ShortcutHubOverlayService : Service() {
                                 tile.customFontUri?.let { put("customFontUri", it) }
                                 tile.customFontName?.let { put("customFontName", it) }
                                 tile.customTextScale?.let { put("customTextScale", it.toDouble()) }
+                                tile.customBoldText?.let { put("customBoldText", it) }
                                 when (tile) {
                                     is AppTileState -> {
                                         put("type", TILE_TYPE_APP)
                                         put("label", tile.app.label)
-                                        put("component", tile.app.componentName.flattenToString())
+                                        tile.app.componentName?.let { put("component", it.flattenToString()) }
+                                        tile.app.launchIntentUri?.let { put("launchIntentUri", it) }
+                                        tile.app.launchIntentPackage?.let { put("launchIntentPackage", it) }
+                                        putAppTileIconConfig(tile.iconConfig)
+                                    }
+                                    is WidgetTileState -> {
+                                        put("type", TILE_TYPE_WIDGET)
+                                        put("appWidgetId", tile.appWidgetId)
+                                        put("providerComponent", tile.providerComponent)
+                                    }
+                                    is SystemSliderTileState -> {
+                                        put("type", TILE_TYPE_SYSTEM_SLIDER)
+                                        put("sliderType", tile.config.sliderType.name)
+                                        put("streamMode", tile.config.streamMode.name)
+                                        put("singleStream", tile.config.singleStream.name)
+                                        put("buttonPlacement", tile.config.buttonPlacement.name)
+                                        put("notchMode", tile.config.notchMode.name)
+                                        put("showNotches", tile.config.showNotches)
+                                        put("buttonStepSize", tile.config.buttonStepSize)
                                     }
                                     is IntentTileState -> {
                                         put("type", TILE_TYPE_INTENT)
@@ -455,11 +654,12 @@ class ShortcutHubOverlayService : Service() {
                 },
             )
         }
-
+        val serialized = root.toString()
         getSharedPreferences(OVERLAY_PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(OVERLAY_PREFS_KEY_STATE, root.toString())
+            .putString(OVERLAY_PREFS_KEY_STATE, serialized)
             .apply()
+        OverlayRuntimeCache.updateState(serialized, ShortcutHubSettings.load(this), state)
     }
 
     private class OverlayLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner {
