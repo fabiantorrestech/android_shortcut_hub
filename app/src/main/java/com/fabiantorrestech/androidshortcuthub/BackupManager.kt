@@ -91,6 +91,13 @@ object BackupManager {
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
             ?: JSONObject()
 
+        val grayscaleRaw = context
+            .getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(GRAYSCALE_PREFS_KEY_CONFIG, null)
+        val grayscaleJson = grayscaleRaw
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: JSONObject()
+
         return JSONObject().apply {
             put("version", 1)
             put(
@@ -101,6 +108,7 @@ object BackupManager {
             )
             put("settings", settingsJson)
             put("layout", layoutJson)
+            put("grayscale", grayscaleJson)
         }.toString(2)
     }
 
@@ -136,6 +144,14 @@ object BackupManager {
                 context.getSharedPreferences(OVERLAY_PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString(OVERLAY_PREFS_KEY_STATE, layoutJson.toString())
+                    .apply()
+            }
+
+            val grayscaleJson = root.optJSONObject("grayscale")
+            if (grayscaleJson != null && grayscaleJson.length() > 0) {
+                context.getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(GRAYSCALE_PREFS_KEY_CONFIG, grayscaleJson.toString())
                     .apply()
             }
             true

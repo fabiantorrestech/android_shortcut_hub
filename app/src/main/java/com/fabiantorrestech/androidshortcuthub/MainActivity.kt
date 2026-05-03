@@ -17,12 +17,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -34,11 +38,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -93,6 +99,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var areNotificationsEnabled by remember { mutableStateOf(areAppNotificationsEnabled(context)) }
     var hasWriteSettingsPermission by remember { mutableStateOf(android.provider.Settings.System.canWrite(context)) }
     var config by remember { mutableStateOf(ShortcutHubSettings.load(context)) }
+    var grayscaleConfig by remember { mutableStateOf(GrayscaleRepository.load(context)) }
     var settingsMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
@@ -150,6 +157,36 @@ fun MainScreen(modifier: Modifier = Modifier) {
             ShortcutHubSettings.save(context, config)
             settingsMessage = "Default font updated"
         }
+    }
+
+    // Separate launcher used by the Layout editor tab to pick custom tile icons.
+    // The result is dispatched via the shared overlay icon event flow so the inspector
+    // can consume it regardless of which component is currently active.
+    var pendingEditorIconTileId by remember { mutableStateOf<Int?>(null) }
+    val editorIconPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val tileId = pendingEditorIconTileId ?: return@rememberLauncherForActivityResult
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val displayName = resolveDisplayName(context.contentResolver, uri) ?: uri.lastPathSegment ?: "icon"
+            ShortcutHubOverlayService.dispatchTileIconPicked(tileId, uri.toString(), displayName)
+        }
+        pendingEditorIconTileId = null
+    }
+
+    // Separate launcher used by the Layout editor tab to pick custom tile fonts.
+    var pendingEditorFontTileId by remember { mutableStateOf<Int?>(null) }
+    val editorFontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val tileId = pendingEditorFontTileId ?: return@rememberLauncherForActivityResult
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val displayName = resolveDisplayName(context.contentResolver, uri) ?: uri.lastPathSegment ?: "font"
+            ShortcutHubOverlayService.dispatchTileFontPicked(tileId, uri.toString(), displayName)
+        }
+        pendingEditorFontTileId = null
     }
 
     val intentDetails = remember(context.packageName) {
@@ -230,21 +267,26 @@ fun MainScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = "Shortcut Hub",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-        )
-        PrimaryTabRow(selectedTabIndex = selectedTab) {
-            listOf("Setup", "Grid", "Appearance", "Behavior", "Backup").forEachIndexed { index, title ->
-                Tab(
-                    selected = selectedTab == index,
-                    onClick = {
-                        selectedTab = index
-                        settingsMessage = null
-                    },
-                    text = { Text(title) },
-                )
+        if (selectedTab != 6) {
+            Text(
+                text = "Shortcut Hub",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+            )
+            PrimaryScrollableTabRow(
+                selectedTabIndex = selectedTab,
+                edgePadding = 0.dp,
+            ) {
+                listOf("Setup", "Grid", "Appearance", "Behavior", "Grayscale", "Backup", "Layout").forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = {
+                            selectedTab = index
+                            settingsMessage = null
+                        },
+                        text = { Text(title) },
+                    )
+                }
             }
         }
         when (selectedTab) {
@@ -343,7 +385,14 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     ShortcutHubSettings.save(context, updated)
                 },
             )
-            4 -> BackupTab(
+            4 -> GrayscaleTab(
+                grayscaleConfig = grayscaleConfig,
+                onConfigChange = { updated ->
+                    grayscaleConfig = updated
+                    GrayscaleRepository.save(context, updated)
+                },
+            )
+            5 -> BackupTab(
                 statusMessage = settingsMessage,
                 autoBackupEnabled = autoBackupEnabled,
                 autoBackupDirectoryUri = autoBackupDirectoryUri,
@@ -359,6 +408,17 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 onImport = {
                     settingsMessage = null
                     importLauncher.launch(arrayOf("application/json", "*/*"))
+                },
+            )
+            6 -> LayoutTab(
+                onBack = { selectedTab = 0; settingsMessage = null },
+                onOpenFontPicker = { tileId ->
+                    pendingEditorFontTileId = tileId
+                    editorFontPicker.launch(arrayOf("font/*", "application/octet-stream"))
+                },
+                onOpenIconPicker = { tileId ->
+                    pendingEditorIconTileId = tileId
+                    editorIconPicker.launch(arrayOf("image/*"))
                 },
             )
         }
@@ -976,6 +1036,339 @@ private fun resolveDisplayName(contentResolver: ContentResolver, uri: Uri): Stri
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
     }.getOrNull()
+
+/**
+ * Layout tab — wraps [OverlayEditorScreen] with a persistent [OverlayEditorState].
+ *
+ * Font and icon pickers are delegated to the launchers already registered in [MainScreen]
+ * since activity result launchers must be registered before the activity starts.
+ */
+@Composable
+private fun LayoutTab(
+    onBack: () -> Unit,
+    onOpenFontPicker: (tileId: Int) -> Unit,
+    onOpenIconPicker: (tileId: Int) -> Unit,
+) {
+    val context = LocalContext.current
+    // remember { } so that draft state persists while the user switches between tabs
+    val editorState = remember {
+        OverlayEditorState(OverlayStateRepository.load(context))
+    }
+
+    OverlayEditorScreen(
+        editorState = editorState,
+        onBack = onBack,
+        onSave = { committedState ->
+            OverlayStateRepository.save(context, committedState)
+            Toast.makeText(context, "Layout saved. Toggle the overlay to apply.", Toast.LENGTH_SHORT).show()
+            onBack()
+        },
+        onDiscard = { onBack() },
+        openFontPicker = onOpenFontPicker,
+        openIconPicker = onOpenIconPicker,
+        fontEvents = ShortcutHubOverlayService.tileFontSelectionEvents(),
+        iconEvents = ShortcutHubOverlayService.tileIconSelectionEvents(),
+    )
+}
+
+@Composable
+private fun GrayscaleTab(
+    grayscaleConfig: GrayscaleConfig,
+    onConfigChange: (GrayscaleConfig) -> Unit,
+) {
+    val context = LocalContext.current
+    var showAppChooser by remember { mutableStateOf(false) }
+    var availableApps by remember { mutableStateOf<List<GrayscaleAppEntry>>(emptyList()) }
+    var isLoadingApps by remember { mutableStateOf(false) }
+    var appSearchQuery by remember { mutableStateOf("") }
+
+    val installedPackages = remember {
+        context.packageManager.getInstalledApplications(0).map { it.packageName }.toSet()
+    }
+
+    val activeList = when (grayscaleConfig.activeMode) {
+        GrayscaleFilterMode.WHITELIST -> grayscaleConfig.whitelistApps
+        GrayscaleFilterMode.BLACKLIST -> grayscaleConfig.blacklistApps
+    }
+    val activePackages = remember(activeList) { activeList.map { it.packageName }.toSet() }
+
+    val filteredForChooser = remember(availableApps, activePackages, appSearchQuery) {
+        val q = appSearchQuery.trim()
+        availableApps
+            .filter { it.packageName !in activePackages }
+            .let { list ->
+                if (q.isEmpty()) list
+                else list.filter { a ->
+                    a.label.contains(q, ignoreCase = true) || a.packageName.contains(q, ignoreCase = true)
+                }
+            }
+    }
+
+    LaunchedEffect(showAppChooser) {
+        if (showAppChooser && availableApps.isEmpty() && !isLoadingApps) {
+            isLoadingApps = true
+            availableApps = withContext(Dispatchers.IO) {
+                context.packageManager.getInstalledApplications(0)
+                    .mapNotNull { info ->
+                        context.packageManager.getLaunchIntentForPackage(info.packageName)
+                            ?: return@mapNotNull null
+                        val label = context.packageManager.getApplicationLabel(info)
+                            ?.toString()?.ifBlank { info.packageName } ?: info.packageName
+                        GrayscaleAppEntry(packageName = info.packageName, label = label)
+                    }
+                    .sortedBy { it.label.lowercase() }
+            }
+            isLoadingApps = false
+        }
+    }
+
+    fun updateActiveList(newList: List<GrayscaleAppEntry>) {
+        onConfigChange(
+            when (grayscaleConfig.activeMode) {
+                GrayscaleFilterMode.WHITELIST -> grayscaleConfig.copy(whitelistApps = newList)
+                GrayscaleFilterMode.BLACKLIST -> grayscaleConfig.copy(blacklistApps = newList)
+            },
+        )
+    }
+
+    if (showAppChooser) {
+        AlertDialog(
+            onDismissRequest = { showAppChooser = false; appSearchQuery = "" },
+            title = {
+                Text("Add to ${if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST) "Whitelist" else "Blacklist"}")
+            },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = appSearchQuery,
+                        onValueChange = { appSearchQuery = it },
+                        label = { Text("Search") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    when {
+                        isLoadingApps -> Text(
+                            "Loading apps…",
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        filteredForChooser.isEmpty() -> Text(
+                            if (availableApps.isEmpty()) "No apps found." else "All apps already added.",
+                            modifier = Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        else -> LazyColumn {
+                            items(filteredForChooser, key = { it.packageName }) { app ->
+                                TextButton(
+                                    onClick = { updateActiveList(activeList + app) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Text(app.label, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            app.packageName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showAppChooser = false; appSearchQuery = "" }) { Text("Done") }
+            },
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // ── Enable toggle ────────────────────────────────────────────────────
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Grayscale Background", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Enable grayscale background")
+                    Switch(
+                        checked = false,
+                        onCheckedChange = {},
+                        enabled = false,
+                    )
+                }
+                Text(
+                    "Coming soon — grayscale background is not yet available.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (false) {
+            // ── Capture mode ─────────────────────────────────────────────────
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Capture Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = grayscaleConfig.captureMode == GrayscaleMode.SIMPLE,
+                            onClick = { onConfigChange(grayscaleConfig.copy(captureMode = GrayscaleMode.SIMPLE)) },
+                        )
+                        Column {
+                            Text("Simple (snapshot)", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Takes a one-shot screenshot when the overlay opens. No permission dialog, no battery overhead.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = grayscaleConfig.captureMode == GrayscaleMode.ADVANCED,
+                            onClick = { onConfigChange(grayscaleConfig.copy(captureMode = GrayscaleMode.ADVANCED)) },
+                        )
+                        Column {
+                            Text("Advanced (live)", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Streams the screen at 30 fps so the background updates in real time (e.g. maps, video). Requires a one-time screen-capture permission per app session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── Filter mode ──────────────────────────────────────────────────
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Filter Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = grayscaleConfig.activeMode == GrayscaleFilterMode.BLACKLIST,
+                            onClick = { onConfigChange(grayscaleConfig.copy(activeMode = GrayscaleFilterMode.BLACKLIST)) },
+                        )
+                        Column {
+                            Text("Blacklist", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Listed apps appear in grayscale; all others keep their colors.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST,
+                            onClick = { onConfigChange(grayscaleConfig.copy(activeMode = GrayscaleFilterMode.WHITELIST)) },
+                        )
+                        Column {
+                            Text("Whitelist", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Listed apps keep their colors; everything else appears in grayscale.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── App list for active profile ───────────────────────────────
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST) "Whitelist" else "Blacklist",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        OutlinedButton(onClick = { showAppChooser = true }) { Text("+ Add App") }
+                    }
+
+                    if (activeList.isEmpty()) {
+                        Text(
+                            if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST)
+                                "No apps added. Add apps that should keep their colors when the overlay is open."
+                            else
+                                "No apps added. Add apps that should always appear in grayscale.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        activeList.forEach { entry ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(entry.label, style = MaterialTheme.typography.bodyMedium)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            entry.packageName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        if (entry.packageName !in installedPackages) {
+                                            Text(
+                                                "· not installed",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                }
+                                TextButton(
+                                    onClick = {
+                                        updateActiveList(activeList.filter { it.packageName != entry.packageName })
+                                    },
+                                ) { Text("Remove") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Preview(showBackground = true)
 @Composable

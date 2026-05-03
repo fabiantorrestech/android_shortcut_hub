@@ -6,4 +6,7 @@
     <string name="overlay_notification_channel_name">Shortcut Hub Overlay</string>
     <string name="overlay_notification_title">Shortcut Hub overlay active</string>
     <string name="overlay_notification_text">Tap your shortcut or intent again to dismiss the overlay.</string>
+    <string name="grayscale_notification_channel_name">Shortcut Hub Grayscale</string>
+    <string name="grayscale_notification_title">Grayscale background active</string>
+    <string name="grayscale_notification_text">Screen is being captured to render grayscale under your shortcuts.</string>
 </resources>

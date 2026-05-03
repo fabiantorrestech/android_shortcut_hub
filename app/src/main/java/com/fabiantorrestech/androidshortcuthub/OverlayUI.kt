@@ -69,6 +69,7 @@ import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WorkOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+// CardDefaults is now used in OverlayPreview.kt; keeping import avoids compilation warnings in overlapping usages
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -86,7 +87,9 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -281,6 +284,9 @@ internal data class SystemSliderConfig(
     val notchMode: SliderNotchMode = SliderNotchMode.LOCK_AND_SLIDE,
     val showNotches: Boolean = true,
     val buttonStepSize: Int = 1,
+    val showOutline: Boolean = false,
+    val buttonHapticsEnabled: Boolean = false,
+    val notchHapticsEnabled: Boolean = false,
 )
 
 internal data class SystemSliderTileState(
@@ -343,7 +349,7 @@ private val materialIconOptions = listOf(
     MaterialIconOption("apps", "Apps", Icons.Outlined.Apps),
 )
 
-private fun materialIconForKey(key: String?): MaterialIconOption? =
+internal fun materialIconForKey(key: String?): MaterialIconOption? =
     materialIconOptions.firstOrNull { it.key == key }
 
 internal fun parseAppTileIconConfig(item: org.json.JSONObject): AppTileIconConfig {
@@ -454,6 +460,9 @@ internal fun OverlayContent(
     onPersist: (OverlayUiState) -> Unit,
     onDismiss: () -> Unit,
     onKeyboardInputToggle: (Boolean) -> Unit = {},
+    grayscaleFrame: Flow<Bitmap?> = kotlinx.coroutines.flow.MutableStateFlow(null),
+    grayscaleConfig: GrayscaleConfig = GrayscaleConfig(),
+    foregroundPackage: Flow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -961,10 +970,23 @@ internal fun OverlayContent(
         )
     }
 
+    val grayscaleBitmap by grayscaleFrame.collectAsState(initial = null)
+    val foregroundPkg by foregroundPackage.collectAsState(initial = null)
+    val whitelistPackages = remember(grayscaleConfig.whitelistApps) {
+        grayscaleConfig.whitelistApps.map { it.packageName }.toSet()
+    }
+    val blacklistPackages = remember(grayscaleConfig.blacklistApps) {
+        grayscaleConfig.blacklistApps.map { it.packageName }.toSet()
+    }
+    val shouldShowGrayscale = grayscaleBitmap != null && when {
+        foregroundPkg == null -> true
+        grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST -> foregroundPkg !in whitelistPackages
+        else -> foregroundPkg in blacklistPackages
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = initialState.overlayBackgroundAlpha))
             .pointerInput(sheetVisible) {
                 val edgeZonePx = 24.dp.toPx()
                 val sliderProtectionPaddingPx = 16.dp.toPx()
@@ -986,6 +1008,24 @@ internal fun OverlayContent(
                 }
             },
     ) {
+        // Layer 1: live grayscale capture of whatever is behind the overlay
+        if (shouldShowGrayscale) {
+            grayscaleBitmap?.let { bmp ->
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds,
+                )
+            }
+        }
+        // Layer 2: translucent tinted panel (alpha controlled in settings)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = initialState.overlayBackgroundAlpha)),
+        )
+
         if (initialState.showPanelHandle) {
             Column(
                 modifier = Modifier
@@ -1083,258 +1123,97 @@ internal fun OverlayContent(
             }
         }
 
-        // Grid + tiles
-        BoxWithConstraints(
+        // Grid + tiles — delegated to OverlayGridPreview
+        OverlayGridPreview(
+            tiles = tiles.toList(),
+            gridRows = gridRows,
+            gridColumns = gridColumns,
+            showGrid = showGrid,
+            mode = OverlayRenderMode.Runtime,
+            selectedTileId = selectedTileId,
+            isMoveMode = isMoveMode,
+            defaultTextScale = defaultTextScale,
+            defaultFontWeight = defaultFontWeight,
+            defaultFontFamily = defaultFontFamily,
+            defaultTextColor = defaultTextColor,
+            hapticFeedbackEnabled = initialState.hapticFeedbackEnabled,
+            preloadedFonts = preloadedFonts,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-        ) {
-            val cellWidth = maxWidth / gridColumns
-            val cellHeight = maxHeight / gridRows
-
-            if (showGrid) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val cw = size.width / gridColumns
-                    val ch = size.height / gridRows
-                    for (col in 0..gridColumns) {
-                        val x = col * cw
-                        drawLine(Color.White.copy(alpha = 0.18f), Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
-                    }
-                    for (row in 0..gridRows) {
-                        val y = row * ch
-                        drawLine(Color.White.copy(alpha = 0.18f), Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
-                    }
+            onTileSelect = { id -> selectedTileId = id; sheetVisible = true },
+            onTileTap = { tile ->
+                when (tile) {
+                    is AppTileState -> { launchApp(tile.app); onDismiss() }
+                    is IntentTileState -> { launchIntent(tile); onDismiss() }
+                    else -> Unit
                 }
-            }
-
-            tiles.forEach { tile ->
-                val isSelected = tile.id == selectedTileId
-                val isWidgetInEditMode = tile is WidgetTileState && isMoveMode
-                val tileBorderColor = when {
-                    isWidgetInEditMode && isSelected -> MaterialTheme.colorScheme.tertiary
-                    isWidgetInEditMode -> MaterialTheme.colorScheme.outlineVariant
-                    isSelected -> MaterialTheme.colorScheme.primary
-                    else -> Color.Transparent
+            },
+            onTileLongPress = { tile -> selectedTileId = tile.id; sheetVisible = true },
+            onSliderBoundsChanged = { id, bounds -> protectedSliderBounds[id] = bounds },
+            widgetContent = { tile ->
+                val providerInfo = remember(tile.appWidgetId, tile.providerComponent) {
+                    appWidgetManager.getAppWidgetInfo(tile.appWidgetId)
                 }
-                val tileBackgroundColor = when {
-                    isWidgetInEditMode && isSelected -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.28f)
-                    isWidgetInEditMode -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.16f)
-                    isSelected -> MaterialTheme.colorScheme.primaryContainer
-                    else -> Color.Transparent
-                }
-                val isInteractiveTile = tile is WidgetTileState || tile is SystemSliderTileState
-                val tileModifier = if (isInteractiveTile && isMoveMode) {
-                    Modifier
-                        .offset(x = cellWidth * tile.column, y = cellHeight * tile.row)
-                        .size(width = cellWidth * tile.columnSpan, height = cellHeight * tile.rowSpan)
-                        .padding(6.dp)
-                        .combinedClickable(
-                            onClick = { selectedTileId = tile.id; sheetVisible = true },
-                            onLongClick = { selectedTileId = tile.id; sheetVisible = true },
-                        )
-                } else if (isInteractiveTile) {
-                    // Widget and slider tiles handle their own touch; long-press still opens sheet
-                    Modifier
-                        .offset(x = cellWidth * tile.column, y = cellHeight * tile.row)
-                        .size(width = cellWidth * tile.columnSpan, height = cellHeight * tile.rowSpan)
-                        .padding(6.dp)
-                } else {
-                    Modifier
-                        .offset(x = cellWidth * tile.column, y = cellHeight * tile.row)
-                        .size(width = cellWidth * tile.columnSpan, height = cellHeight * tile.rowSpan)
-                        .padding(6.dp)
-                        .combinedClickable(
-                            onClick = {
-                                if (initialState.hapticFeedbackEnabled) {
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                }
-                                if (selectedTileId == null) {
-                                    when (tile) {
-                                        is AppTileState -> { launchApp(tile.app); onDismiss() }
-                                        is IntentTileState -> { launchIntent(tile); onDismiss() }
-                                        is WidgetTileState -> Unit
-                                        is SystemSliderTileState -> Unit
-                                    }
-                                }
-                            },
-                            onLongClick = {
-                                if (initialState.hapticFeedbackEnabled) {
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                }
-                                selectedTileId = tile.id
-                                sheetVisible = true
-                            },
-                        )
-                }
-                Card(
-                    modifier = tileModifier
-                        .then(
-                            if (tile is SystemSliderTileState) {
-                                Modifier.onGloballyPositioned { coordinates ->
-                                    protectedSliderBounds[tile.id] = coordinates.boundsInRoot()
-                                }
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .border(
-                            width = if (isWidgetInEditMode || isSelected) 2.dp else 0.dp,
-                            color = tileBorderColor,
-                            shape = RoundedCornerShape(18.dp),
-                        ),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = tileBackgroundColor,
-                    ),
-                ) {
-                    Surface(color = tileBackgroundColor) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            when (tile) {
-                                is WidgetTileState -> {
-                                    val providerInfo = remember(tile.appWidgetId, tile.providerComponent) {
-                                        appWidgetManager.getAppWidgetInfo(tile.appWidgetId)
-                                    }
-                                    if (providerInfo != null) {
-                                        AndroidView(
-                                            factory = {
-                                                WidgetViewCache.getOrCreate(
-                                                    context = context,
-                                                    appWidgetId = tile.appWidgetId,
-                                                    providerInfo = providerInfo,
-                                                ).apply {
-                                                    isLongClickable = !isMoveMode
-                                                    setOnLongClickListener(
-                                                        if (isMoveMode) {
-                                                            null
-                                                        } else {
-                                                            {
-                                                                if (initialState.hapticFeedbackEnabled) {
-                                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                }
-                                                                selectedTileId = tile.id
-                                                                sheetVisible = true
-                                                                true
-                                                            }
-                                                        },
-                                                    )
-                                                    isClickable = !isMoveMode
-                                                    isEnabled = !isMoveMode
-                                                }
-                                            },
-                                            update = { hostView ->
-                                                hostView.isLongClickable = !isMoveMode
-                                                hostView.setOnLongClickListener(
-                                                    if (isMoveMode) {
-                                                        null
-                                                    } else {
-                                                        {
-                                                            if (initialState.hapticFeedbackEnabled) {
-                                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                            }
-                                                            selectedTileId = tile.id
-                                                            sheetVisible = true
-                                                            true
-                                                        }
-                                                    },
-                                                )
-                                                hostView.isClickable = !isMoveMode
-                                                hostView.isEnabled = !isMoveMode
-                                            },
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    } else {
-                                        Text(
-                                            text = tile.displayLabel,
-                                            modifier = Modifier.align(Alignment.Center).padding(8.dp),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = defaultTextColor,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        )
-                                    }
+                if (providerInfo != null) {
+                    AndroidView(
+                        factory = {
+                            WidgetViewCache.getOrCreate(
+                                context = context,
+                                appWidgetId = tile.appWidgetId,
+                                providerInfo = providerInfo,
+                            ).apply {
+                                isLongClickable = !isMoveMode
+                                setOnLongClickListener(
                                     if (isMoveMode) {
-                                        Text(
-                                            text = if (isSelected) "EDITING" else "WIDGET",
-                                            modifier = Modifier
-                                                .align(Alignment.TopStart)
-                                                .padding(8.dp),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isSelected) {
-                                                MaterialTheme.colorScheme.tertiary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
-                                is AppTileState -> {
-                                    AppTileContent(
-                                        tile = tile,
-                                        defaultTextScale = defaultTextScale,
-                                        defaultFontFamily = defaultFontFamily,
-                                        defaultFontWeight = defaultFontWeight,
-                                        defaultTextColor = defaultTextColor,
-                                        preloadedFonts = preloadedFonts,
-                                        loadFontFamily = loadFontFamily,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
-                                is SystemSliderTileState -> {
-                                    SystemSliderTile(
-                                        config = tile.config,
-                                        isMoveMode = isMoveMode,
-                                        onLongPress = {
+                                        null
+                                    } else {
+                                        {
                                             if (initialState.hapticFeedbackEnabled) {
                                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                             }
                                             selectedTileId = tile.id
                                             sheetVisible = true
-                                        },
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                    if (isMoveMode) {
-                                        Text(
-                                            text = if (isSelected) "EDITING" else tile.displayLabel.uppercase(),
-                                            modifier = Modifier
-                                                .align(Alignment.TopStart)
-                                                .padding(8.dp),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isSelected) {
-                                                MaterialTheme.colorScheme.tertiary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
-                                else -> {
-                                    Text(
-                                        text = tile.displayLabel,
-                                        modifier = Modifier.align(Alignment.Center).padding(8.dp),
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontSize = MaterialTheme.typography.bodyMedium.fontSize *
-                                                (tile.customTextScale ?: defaultTextScale),
-                                            fontFamily = rememberTileFontFamily(
-                                                fontUri = tile.customFontUri,
-                                                preloadedFonts = preloadedFonts,
-                                                loadFontFamily = loadFontFamily,
-                                            ) ?: defaultFontFamily,
-                                        ),
-                                        color = defaultTextColor,
-                                        fontWeight = when {
-                                            isSelected -> FontWeight.SemiBold
-                                            tile.customBoldText != null -> if (tile.customBoldText == true) FontWeight.Bold else FontWeight.Normal
-                                            else -> defaultFontWeight
-                                        },
-                                    )
-                                }
+                                            true
+                                        }
+                                    },
+                                )
+                                isClickable = !isMoveMode
+                                isEnabled = !isMoveMode
                             }
-                        }
-                    }
+                        },
+                        update = { hostView ->
+                            hostView.isLongClickable = !isMoveMode
+                            hostView.setOnLongClickListener(
+                                if (isMoveMode) {
+                                    null
+                                } else {
+                                    {
+                                        if (initialState.hapticFeedbackEnabled) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        }
+                                        selectedTileId = tile.id
+                                        sheetVisible = true
+                                        true
+                                    }
+                                },
+                            )
+                            hostView.isClickable = !isMoveMode
+                            hostView.isEnabled = !isMoveMode
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = tile.displayLabel,
+                        modifier = Modifier.align(Alignment.Center).padding(8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = defaultTextColor,
+                        fontWeight = if (tile.id == selectedTileId) FontWeight.SemiBold else FontWeight.Normal,
+                    )
                 }
-            }
-        }
+            },
+        )
 
         // D-pad
         if (isMoveMode && selectedTileId != null) {
@@ -1725,7 +1604,7 @@ internal fun OverlayContent(
     }
 }
 
-private fun Drawable.asBitmapPainter(): Painter? = runCatching {
+internal fun Drawable.asBitmapPainter(): Painter? = runCatching {
     val bitmap: Bitmap = if (this is BitmapDrawable && bitmap != null) {
         bitmap
     } else {
@@ -1735,7 +1614,7 @@ private fun Drawable.asBitmapPainter(): Painter? = runCatching {
 }.getOrNull()
 
 @Composable
-private fun rememberAppTileAppIconPainter(packageName: String): Painter? {
+internal fun rememberAppTileAppIconPainter(packageName: String): Painter? {
     val context = LocalContext.current
     return remember(packageName) {
         runCatching { context.packageManager.getApplicationIcon(packageName).asBitmapPainter() }.getOrNull()
@@ -1743,7 +1622,7 @@ private fun rememberAppTileAppIconPainter(packageName: String): Painter? {
 }
 
 @Composable
-private fun rememberCustomIconPainter(uriString: String?): Painter? {
+internal fun rememberCustomIconPainter(uriString: String?): Painter? {
     val context = LocalContext.current
     var painter by remember(uriString) { mutableStateOf<Painter?>(null) }
 
@@ -1764,7 +1643,7 @@ private fun rememberCustomIconPainter(uriString: String?): Painter? {
 }
 
 @Composable
-private fun AppTileContent(
+internal fun AppTileContent(
     tile: AppTileState,
     defaultTextScale: Float,
     defaultFontFamily: FontFamily?,
@@ -2038,7 +1917,7 @@ private fun TileEditSheet(
 }
 
 @Composable
-private fun AppTileIconControls(
+internal fun AppTileIconControls(
     config: AppTileIconConfig,
     onConfigChange: (AppTileIconConfig) -> Unit,
     onIconScaleUp: () -> Unit,
@@ -2477,6 +2356,42 @@ internal fun SliderConfigControls(
             androidx.compose.material3.Switch(
                 checked = config.showNotches,
                 onCheckedChange = { onConfigChange(config.copy(showNotches = it)) },
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Thin outline", style = MaterialTheme.typography.bodyMedium)
+            androidx.compose.material3.Switch(
+                checked = config.showOutline,
+                onCheckedChange = { onConfigChange(config.copy(showOutline = it)) },
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Button haptics", style = MaterialTheme.typography.bodyMedium)
+            androidx.compose.material3.Switch(
+                checked = config.buttonHapticsEnabled,
+                onCheckedChange = { onConfigChange(config.copy(buttonHapticsEnabled = it)) },
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Notch haptics", style = MaterialTheme.typography.bodyMedium)
+            androidx.compose.material3.Switch(
+                checked = config.notchHapticsEnabled,
+                onCheckedChange = { onConfigChange(config.copy(notchHapticsEnabled = it)) },
             )
         }
 

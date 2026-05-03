@@ -251,15 +251,6 @@ private data class WidgetGroup(
 
 // ── Image helpers ─────────────────────────────────────────────────────────────
 
-private fun android.graphics.drawable.Drawable.asBitmapPainter(): Painter? = runCatching {
-    val bmp: Bitmap = if (this is BitmapDrawable && bitmap != null) {
-        bitmap
-    } else {
-        toBitmap(intrinsicWidth.coerceAtLeast(1), intrinsicHeight.coerceAtLeast(1))
-    }
-    BitmapPainter(bmp.asImageBitmap())
-}.getOrNull()
-
 @Composable
 private fun rememberAppIcon(packageName: String): Painter? {
     val context = LocalContext.current
@@ -554,6 +545,9 @@ private fun SystemWidgetConfigScreen(
     var buttonPlacement by remember { mutableStateOf(SliderButtonPlacement.SPLIT) }
     var notchMode by remember { mutableStateOf(SliderNotchMode.LOCK_AND_SLIDE) }
     var showNotches by remember { mutableStateOf(true) }
+    var showOutline by remember { mutableStateOf(false) }
+    var buttonHapticsEnabled by remember { mutableStateOf(false) }
+    var notchHapticsEnabled by remember { mutableStateOf(false) }
     var rowSpan by remember { mutableIntStateOf(3.coerceAtMost(gridRows)) }
     var columnSpan by remember { mutableIntStateOf(1.coerceAtMost(gridColumns)) }
 
@@ -583,6 +577,9 @@ private fun SystemWidgetConfigScreen(
                     buttonPlacement = buttonPlacement,
                     notchMode = notchMode,
                     showNotches = showNotches,
+                    showOutline = showOutline,
+                    buttonHapticsEnabled = buttonHapticsEnabled,
+                    notchHapticsEnabled = notchHapticsEnabled,
                 ),
                 onConfigChange = { updated ->
                     streamMode = updated.streamMode
@@ -590,6 +587,9 @@ private fun SystemWidgetConfigScreen(
                     buttonPlacement = updated.buttonPlacement
                     notchMode = updated.notchMode
                     showNotches = updated.showNotches
+                    showOutline = updated.showOutline
+                    buttonHapticsEnabled = updated.buttonHapticsEnabled
+                    notchHapticsEnabled = updated.notchHapticsEnabled
                 },
             )
 
@@ -616,6 +616,9 @@ private fun SystemWidgetConfigScreen(
                             buttonPlacement = buttonPlacement,
                             notchMode = notchMode,
                             showNotches = showNotches,
+                            showOutline = showOutline,
+                            buttonHapticsEnabled = buttonHapticsEnabled,
+                            notchHapticsEnabled = notchHapticsEnabled,
                         ),
                         rowSpan,
                         columnSpan,

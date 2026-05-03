@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <queries>
         <intent>
@@ -74,6 +76,14 @@
             android:theme="@style/Theme.ShortcutHub" />
 
         <activity
+            android:name=".GrayscalePermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ShortcutHub.Transparent" />
+
+        <activity
             android:name=".LockscreenOverlayActivity"
             android:excludeFromRecents="true"
             android:exported="false"
@@ -94,6 +104,11 @@
         <service
             android:name=".ShortcutHubOverlayService"
             android:exported="false" />
+
+        <service
+            android:name=".GrayscaleCaptureForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <service
             android:name=".ShortcutHubAccessibilityService"
