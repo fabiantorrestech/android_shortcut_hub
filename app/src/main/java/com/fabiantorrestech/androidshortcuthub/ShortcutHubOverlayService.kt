@@ -35,6 +35,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -153,16 +154,21 @@ class ShortcutHubOverlayService : Service() {
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
-                val stateStartMs = SystemClock.elapsedRealtime()
-                val initialState = OverlayStateRepository.load(this@ShortcutHubOverlayService)
-                val stateElapsedMs = SystemClock.elapsedRealtime() - stateStartMs
-
-                val grayscaleConfig = withContext(Dispatchers.IO) {
-                    GrayscaleRepository.syncAppLabels(
-                        this@ShortcutHubOverlayService,
-                        GrayscaleRepository.load(this@ShortcutHubOverlayService),
-                    ).also { GrayscaleRepository.save(this@ShortcutHubOverlayService, it) }
+                // Load state and grayscale config concurrently — they read different prefs files.
+                val stateDeferred = async(Dispatchers.IO) {
+                    OverlayStateRepository.load(this@ShortcutHubOverlayService)
                 }
+                val grayscaleDeferred = async(Dispatchers.IO) {
+                    val loaded = GrayscaleRepository.load(this@ShortcutHubOverlayService)
+                    if (loaded.enabled) {
+                        GrayscaleRepository.syncAppLabels(this@ShortcutHubOverlayService, loaded)
+                            .also { GrayscaleRepository.save(this@ShortcutHubOverlayService, it) }
+                    } else {
+                        loaded
+                    }
+                }
+                val initialState = stateDeferred.await()
+                val grayscaleConfig = grayscaleDeferred.await()
                 val grayscaleFrame: Flow<android.graphics.Bitmap?> = when {
                     !grayscaleConfig.enabled -> {
                         GrayscaleCaptureForegroundService.stop(this@ShortcutHubOverlayService)
@@ -180,12 +186,9 @@ class ShortcutHubOverlayService : Service() {
                     }
                 }
 
-                // Preload every font URI before first render so tiles appear with the correct font immediately.
-                val fontStartMs = SystemClock.elapsedRealtime()
                 val preloadedFonts: Map<String, FontFamily?> = withContext(Dispatchers.IO) {
                     OverlayRuntimeCache.preloadFonts(initialState, ::loadFontFamily)
                 }
-                val fontElapsedMs = SystemClock.elapsedRealtime() - fontStartMs
 
                 val lifecycleOwner = OverlayLifecycleOwner().also {
                     it.start()
@@ -276,11 +279,7 @@ class ShortcutHubOverlayService : Service() {
                 overlayView = composeView
                 overlayParams = params
                 windowManager.addView(composeView, params)
-                Log.d(
-                    TAG,
-                    "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms " +
-                        "(state=${stateElapsedMs}ms, fonts=${fontElapsedMs}ms, warm=$isRunning)",
-                )
+                Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
             } finally {
                 isShowingOverlay = false
             }

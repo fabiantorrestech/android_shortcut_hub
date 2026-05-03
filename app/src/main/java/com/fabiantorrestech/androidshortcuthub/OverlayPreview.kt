@@ -109,7 +109,7 @@ internal fun OverlayGridPreview(
             val tileBorderColor = when (mode) {
                 OverlayRenderMode.EditorPreview -> when {
                     isSelected -> MaterialTheme.colorScheme.primary
-                    else -> Color.Transparent
+                    else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
                 }
                 OverlayRenderMode.Runtime -> when {
                     isWidgetInEditMode && isSelected -> MaterialTheme.colorScheme.tertiary
@@ -121,7 +121,7 @@ internal fun OverlayGridPreview(
             val tileBackgroundColor = when (mode) {
                 OverlayRenderMode.EditorPreview -> when {
                     isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                    else -> Color.Transparent
+                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f)
                 }
                 OverlayRenderMode.Runtime -> when {
                     isWidgetInEditMode && isSelected -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.28f)
@@ -198,7 +198,11 @@ internal fun OverlayGridPreview(
                         },
                     )
                     .border(
-                        width = if (isWidgetInEditMode || isSelected) 2.dp else 0.dp,
+                        width = when {
+                            isWidgetInEditMode || isSelected -> 2.dp
+                            mode == OverlayRenderMode.EditorPreview -> 1.dp
+                            else -> 0.dp
+                        },
                         color = tileBorderColor,
                         shape = RoundedCornerShape(18.dp),
                     ),

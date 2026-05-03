@@ -260,7 +260,6 @@ internal object OverlayStateRepository {
                             ?.let(ComponentName::unflattenFromString)
                         val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
                         val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
-                        if (component == null && launchIntentUri == null) continue
                         add(
                             AppTileState(
                                 id = id,

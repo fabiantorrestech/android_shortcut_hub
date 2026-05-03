@@ -40,6 +40,10 @@ class GrayscaleCaptureForegroundService : Service() {
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_DATA = "data"
 
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
         /** Called by GrayscalePermissionActivity after the user grants screen-capture consent. */
         fun startWithGrant(context: Context, resultCode: Int, data: Intent) {
             val intent = Intent(context, GrayscaleCaptureForegroundService::class.java).apply {
@@ -80,6 +84,7 @@ class GrayscaleCaptureForegroundService : Service() {
 
         /** Fully stops the service and releases the projection. */
         fun stop(context: Context) {
+            if (!isRunning) return
             context.stopService(Intent(context, GrayscaleCaptureForegroundService::class.java))
         }
     }
@@ -90,6 +95,7 @@ class GrayscaleCaptureForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         ensureNotificationChannel()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         runCatching {
@@ -126,6 +132,7 @@ class GrayscaleCaptureForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         stopEngine()
         GrayscaleProjectionBroker.release()
         serviceScope.cancel()

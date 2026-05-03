@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -105,6 +106,11 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         registerReceiverCompat(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
         serviceScope.launch {
             toggleRequests.collect { toggleOverlay() }
+        }
+        // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
+        serviceScope.launch(Dispatchers.IO) {
+            val state = OverlayStateRepository.load(this@ShortcutHubAccessibilityService)
+            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
         }
     }
 
@@ -201,11 +207,11 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
-                val stateStartMs = SystemClock.elapsedRealtime()
-                val initialState = OverlayStateRepository.load(this@ShortcutHubAccessibilityService)
-                val stateElapsedMs = SystemClock.elapsedRealtime() - stateStartMs
-
-                val grayscaleConfig = withContext(Dispatchers.IO) {
+                // Load state and grayscale config concurrently — they read different prefs files.
+                val stateDeferred = async(Dispatchers.IO) {
+                    OverlayStateRepository.load(this@ShortcutHubAccessibilityService)
+                }
+                val grayscaleDeferred = async(Dispatchers.IO) {
                     val loaded = GrayscaleRepository.load(this@ShortcutHubAccessibilityService)
                     if (loaded.enabled) {
                         GrayscaleRepository.syncAppLabels(this@ShortcutHubAccessibilityService, loaded)
@@ -214,6 +220,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                         loaded
                     }
                 }
+                val initialState = stateDeferred.await()
+                val grayscaleConfig = grayscaleDeferred.await()
+
                 val grayscaleFrame: Flow<Bitmap?> = when {
                     !grayscaleConfig.enabled -> {
                         GrayscaleCaptureForegroundService.stop(this@ShortcutHubAccessibilityService)
@@ -231,11 +240,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                val fontStartMs = SystemClock.elapsedRealtime()
                 val preloadedFonts: Map<String, FontFamily?> = withContext(Dispatchers.IO) {
                     OverlayRuntimeCache.preloadFonts(initialState, ::loadFontFamily)
                 }
-                val fontElapsedMs = SystemClock.elapsedRealtime() - fontStartMs
 
                 val lifecycleOwner = OverlayLifecycleOwner().also {
                     it.start()
@@ -315,11 +322,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 overlayView = composeView
                 overlayParams = params
                 windowManager.addView(composeView, params)
-                Log.d(
-                    TAG,
-                    "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms " +
-                        "(state=${stateElapsedMs}ms, fonts=${fontElapsedMs}ms)",
-                )
+                Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
             } finally {
                 isShowingOverlay = false
             }

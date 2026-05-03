@@ -56,14 +56,17 @@ internal object OverlayRuntimeCache {
 
         val loadedFonts = LinkedHashMap<String, FontFamily?>()
         requiredUris.forEach { uri ->
-            val cached = synchronized(fontLock) { cachedFonts[uri] }
-            if (cached != null || synchronized(fontLock) { cachedFonts.containsKey(uri) }) {
-                loadedFonts[uri] = cached
-            } else {
-                val loaded = loadFontFamily(uri)
-                synchronized(fontLock) {
-                    cachedFonts[uri] = loaded
+            val alreadyCached = synchronized(fontLock) {
+                if (cachedFonts.containsKey(uri)) {
+                    loadedFonts[uri] = cachedFonts[uri]
+                    true
+                } else {
+                    false
                 }
+            }
+            if (!alreadyCached) {
+                val loaded = loadFontFamily(uri)
+                synchronized(fontLock) { cachedFonts[uri] = loaded }
                 loadedFonts[uri] = loaded
             }
         }

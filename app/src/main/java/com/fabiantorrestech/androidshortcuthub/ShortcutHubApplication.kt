@@ -3,6 +3,9 @@ package com.fabiantorrestech.androidshortcuthub
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Typeface
+import android.net.Uri
+import androidx.compose.ui.text.font.FontFamily
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,6 +82,18 @@ class ShortcutHubApplication : Application() {
         val config = ShortcutHubSettings.load(this)
         if (!config.useAccessibilityService && ShortcutHubOverlayService.canDrawOverlays(this)) {
             ShortcutHubOverlayService.prewarm(this)
+            // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
+            appScope.launch {
+                val state = OverlayStateRepository.load(applicationContext)
+                OverlayRuntimeCache.preloadFonts(state) { uriString ->
+                    val parsedUri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return@preloadFonts null
+                    runCatching {
+                        contentResolver.openFileDescriptor(parsedUri, "r")?.use { descriptor ->
+                            FontFamily(Typeface.Builder(descriptor.fileDescriptor).build())
+                        }
+                    }.getOrNull()
+                }
+            }
         }
     }
 }
