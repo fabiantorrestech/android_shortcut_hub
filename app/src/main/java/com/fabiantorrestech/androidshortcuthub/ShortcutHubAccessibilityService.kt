@@ -17,6 +17,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.util.DisplayMetrics
 import android.view.Display
 import android.view.Gravity
 import android.view.WindowManager
@@ -306,17 +307,33 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                     }
                 }
 
+                // Use real display pixel dimensions so the window covers the full screen
+                // including the status bar region. MATCH_PARENT is resolved against the
+                // "available" area which excludes the status bar.
+                val (displayWidth, displayHeight) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val bounds = windowManager.currentWindowMetrics.bounds
+                    bounds.width() to bounds.height()
+                } else {
+                    val metrics = DisplayMetrics()
+                    @Suppress("DEPRECATION")
+                    windowManager.defaultDisplay.getRealMetrics(metrics)
+                    metrics.widthPixels to metrics.heightPixels
+                }
+
                 @Suppress("DEPRECATION")
                 val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
+                    displayWidth,
+                    displayHeight,
                     WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                         WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
                     PixelFormat.TRANSLUCENT,
                 ).apply {
                     gravity = Gravity.TOP or Gravity.START
+                    x = 0
+                    y = 0
                 }
 
                 overlayView = composeView
