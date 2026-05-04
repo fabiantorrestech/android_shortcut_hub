@@ -44,6 +44,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -384,6 +385,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     config = updated
                     ShortcutHubSettings.save(context, updated)
                 },
+                isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
             )
             4 -> GrayscaleTab(
                 grayscaleConfig = grayscaleConfig,
@@ -757,6 +759,7 @@ private fun AppearanceTab(
 private fun BehaviorTab(
     config: ShortcutHubConfig,
     onConfigChange: (ShortcutHubConfig) -> Unit,
+    isAccessibilityServiceEnabled: Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -772,9 +775,12 @@ private fun BehaviorTab(
             ) {
                 Text("Behavior", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
                 SettingToggleRow(
-                    label = "Use accessibility service when available",
+                    label = "Cover status bar",
+                    description = if (isAccessibilityServiceEnabled) "Overlay will appear above the status bar"
+                                  else "Requires Accessibility Service to be enabled",
                     checked = config.useAccessibilityService,
                     onCheckedChange = { onConfigChange(config.copy(useAccessibilityService = it)) },
+                    enabled = isAccessibilityServiceEnabled,
                 )
                 SettingToggleRow(
                     label = "Show overlay over lockscreen",
@@ -821,14 +827,33 @@ private fun ColorModeButton(
 }
 
 @Composable
-private fun SettingToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SettingToggleRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    description: String? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) LocalContentColor.current else LocalContentColor.current.copy(alpha = 0.38f),
+            )
+            if (description != null) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LocalContentColor.current.copy(alpha = if (enabled) 0.6f else 0.38f),
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
