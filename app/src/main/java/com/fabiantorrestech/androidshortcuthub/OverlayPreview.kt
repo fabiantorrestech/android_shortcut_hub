@@ -3,10 +3,7 @@ package com.fabiantorrestech.androidshortcuthub
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -139,7 +136,7 @@ internal fun OverlayGridPreview(
                     Modifier
                         .offset(x = cellWidth * tile.column, y = cellHeight * tile.row)
                         .size(width = cellWidth * tile.columnSpan, height = cellHeight * tile.rowSpan)
-                        .padding(6.dp)
+                        .padding(1.dp)
                         .combinedClickable(
                             onClick = { onTileSelect(tile.id) },
                             onLongClick = { onTileSelect(tile.id) },
@@ -204,18 +201,20 @@ internal fun OverlayGridPreview(
                             else -> 0.dp
                         },
                         color = tileBorderColor,
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(if (mode == OverlayRenderMode.EditorPreview) 4.dp else 18.dp),
                     ),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(if (mode == OverlayRenderMode.EditorPreview) 4.dp else 18.dp),
                 colors = CardDefaults.cardColors(containerColor = tileBackgroundColor),
             ) {
                 Surface(color = tileBackgroundColor) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        when (tile) {
-                            is WidgetTileState -> {
-                                when (mode) {
-                                    OverlayRenderMode.Runtime -> {
-                                        // Delegate widget rendering to the caller-supplied lambda
+                        when (mode) {
+                            OverlayRenderMode.EditorPreview -> {
+                                // Plain empty tile — no content, just the card border/background
+                            }
+                            OverlayRenderMode.Runtime -> {
+                                when (tile) {
+                                    is WidgetTileState -> {
                                         widgetContent(tile)
                                         if (isMoveMode) {
                                             Text(
@@ -233,39 +232,21 @@ internal fun OverlayGridPreview(
                                             )
                                         }
                                     }
-                                    OverlayRenderMode.EditorPreview -> {
-                                        WidgetPlaceholder(tile = tile, modifier = Modifier.fillMaxSize())
-                                        if (isSelected) {
-                                            Text(
-                                                text = "SELECTED",
-                                                modifier = Modifier
-                                                    .align(Alignment.TopStart)
-                                                    .padding(8.dp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold,
-                                            )
-                                        }
+
+                                    is AppTileState -> {
+                                        AppTileContent(
+                                            tile = tile,
+                                            defaultTextScale = defaultTextScale,
+                                            defaultFontFamily = defaultFontFamily,
+                                            defaultFontWeight = defaultFontWeight,
+                                            defaultTextColor = defaultTextColor,
+                                            preloadedFonts = preloadedFonts,
+                                            loadFontFamily = { null },
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
                                     }
-                                }
-                            }
 
-                            is AppTileState -> {
-                                AppTileContent(
-                                    tile = tile,
-                                    defaultTextScale = defaultTextScale,
-                                    defaultFontFamily = defaultFontFamily,
-                                    defaultFontWeight = defaultFontWeight,
-                                    defaultTextColor = defaultTextColor,
-                                    preloadedFonts = preloadedFonts,
-                                    loadFontFamily = { null }, // preloaded is sufficient here
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-
-                            is SystemSliderTileState -> {
-                                when (mode) {
-                                    OverlayRenderMode.Runtime -> {
+                                    is SystemSliderTileState -> {
                                         SystemSliderTile(
                                             config = tile.config,
                                             isMoveMode = isMoveMode,
@@ -293,63 +274,31 @@ internal fun OverlayGridPreview(
                                             )
                                         }
                                     }
-                                    OverlayRenderMode.EditorPreview -> {
-                                        // Render the real slider visually so the preview
-                                        // matches the live overlay exactly.
-                                        SystemSliderTile(
-                                            config = tile.config,
-                                            isMoveMode = true,
-                                            onLongPress = {},
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                        // Transparent overlay absorbs all touches so tapping
-                                        // the slider selects it instead of triggering gestures.
-                                        Box(
+
+                                    else -> {
+                                        Text(
+                                            text = tile.displayLabel,
                                             modifier = Modifier
-                                                .fillMaxSize()
-                                                .clickable(
-                                                    indication = null,
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                ) { onTileSelect(tile.id) },
+                                                .align(Alignment.Center)
+                                                .padding(8.dp),
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontSize = MaterialTheme.typography.bodyMedium.fontSize *
+                                                    (tile.customTextScale ?: defaultTextScale),
+                                                fontFamily = rememberTileFontFamily(
+                                                    fontUri = tile.customFontUri,
+                                                    preloadedFonts = preloadedFonts,
+                                                    loadFontFamily = { null },
+                                                ) ?: defaultFontFamily,
+                                            ),
+                                            color = defaultTextColor,
+                                            fontWeight = when {
+                                                isSelected -> FontWeight.SemiBold
+                                                tile.customBoldText != null -> if (tile.customBoldText == true) FontWeight.Bold else FontWeight.Normal
+                                                else -> defaultFontWeight
+                                            },
                                         )
-                                        if (isSelected) {
-                                            Text(
-                                                text = "SELECTED",
-                                                modifier = Modifier
-                                                    .align(Alignment.TopStart)
-                                                    .padding(8.dp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold,
-                                            )
-                                        }
                                     }
                                 }
-                            }
-
-                            else -> {
-                                // IntentTileState and any future types
-                                Text(
-                                    text = tile.displayLabel,
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .padding(8.dp),
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontSize = MaterialTheme.typography.bodyMedium.fontSize *
-                                            (tile.customTextScale ?: defaultTextScale),
-                                        fontFamily = rememberTileFontFamily(
-                                            fontUri = tile.customFontUri,
-                                            preloadedFonts = preloadedFonts,
-                                            loadFontFamily = { null },
-                                        ) ?: defaultFontFamily,
-                                    ),
-                                    color = defaultTextColor,
-                                    fontWeight = when {
-                                        isSelected -> FontWeight.SemiBold
-                                        tile.customBoldText != null -> if (tile.customBoldText == true) FontWeight.Bold else FontWeight.Normal
-                                        else -> defaultFontWeight
-                                    },
-                                )
                             }
                         }
                     }

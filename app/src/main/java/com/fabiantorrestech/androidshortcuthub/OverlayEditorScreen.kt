@@ -13,14 +13,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * In-app layout editor screen.
@@ -53,9 +67,17 @@ internal fun OverlayEditorScreen(
     onDiscard: () -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
+    openDefaultFontPicker: () -> Unit,
     fontEvents: Flow<TileFontSelection>,
     iconEvents: Flow<TileIconSelection>,
 ) {
+    LaunchedEffect(Unit) {
+        OverlayEditorState.defaultFontEvents().collectLatest { (uri, name) ->
+            editorState.defaultFontUri = uri
+            editorState.defaultFontName = name
+            editorState.hasUnsavedChanges = true
+        }
+    }
     val context = LocalContext.current
     val activity = context as? ComponentActivity
 
@@ -126,26 +148,58 @@ internal fun OverlayEditorScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
 
-        // ── Back / unsaved indicator ─────────────────────────────────────────
+        // ── Top bar: back arrow | unsaved label | popup buttons ─────────────
+        var gridPopupOpen by remember { mutableStateOf(false) }
+        var appearancePopupOpen by remember { mutableStateOf(false) }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedButton(onClick = onBack) { Text("← Back") }
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
             if (editorState.hasUnsavedChanges) {
                 Text(
                     text = "Unsaved changes",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                 )
+            } else {
+                Box(modifier = Modifier.weight(1f))
+            }
+            // Appearance popup
+            Box {
+                IconButton(onClick = { appearancePopupOpen = true }) {
+                    Icon(Icons.Default.FormatSize, contentDescription = "Default App Text Settings")
+                }
+                DropdownMenu(
+                    expanded = appearancePopupOpen,
+                    onDismissRequest = { appearancePopupOpen = false },
+                ) {
+                    AppearancePopupContent(editorState, openDefaultFontPicker)
+                }
+            }
+            // Grid / opacity popup
+            Box {
+                IconButton(onClick = { gridPopupOpen = true }) {
+                    Icon(Icons.Default.GridView, contentDescription = "Grid Settings")
+                }
+                DropdownMenu(
+                    expanded = gridPopupOpen,
+                    onDismissRequest = { gridPopupOpen = false },
+                ) {
+                    GridPopupContent(editorState)
+                }
             }
         }
 
         // ── Grid preview (device aspect ratio, centred) ──────────────────────
-        val configuration = LocalConfiguration.current
+        val configuration = LocalConfiguration.current  // already imported at top
         val deviceAspectRatio = configuration.screenWidthDp.toFloat() / configuration.screenHeightDp.toFloat()
         val defaultFontWeight = if (editorState.savedState.defaultBoldText) FontWeight.Bold else FontWeight.Normal
         val defaultTextColor = resolveDefaultTileTextColor(
@@ -166,7 +220,7 @@ internal fun OverlayEditorScreen(
             Box(
                 modifier = Modifier
                     .size(previewWidth, previewHeight)
-                    .background(Color.Black.copy(alpha = editorState.savedState.overlayBackgroundAlpha)),
+                    .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
             ) {
                 OverlayGridPreview(
                     tiles = editorState.tiles.toList(),
@@ -366,3 +420,160 @@ internal fun OverlayEditorScreen(
 
 /** Request code used when launching the widget configure activity from the editor. */
 internal const val CONFIGURE_WIDGET_REQUEST_CODE = 9001
+
+@Composable
+private fun GridPopupContent(editorState: OverlayEditorState) {
+    var rowsInput by remember(editorState.gridRows) { mutableStateOf(editorState.gridRows.toString()) }
+    var colsInput by remember(editorState.gridColumns) { mutableStateOf(editorState.gridColumns.toString()) }
+
+    Column(
+        modifier = Modifier
+            .width(260.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Grid Settings", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        OutlinedTextField(
+            value = rowsInput,
+            onValueChange = { rowsInput = it.filter(Char::isDigit).take(2) },
+            label = { Text("Rows (1–24)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = colsInput,
+            onValueChange = { colsInput = it.filter(Char::isDigit).take(2) },
+            label = { Text("Columns (1–16)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(
+            onClick = {
+                val rows = rowsInput.toIntOrNull()?.coerceIn(1, 24) ?: editorState.gridRows
+                val cols = colsInput.toIntOrNull()?.coerceIn(1, 16) ?: editorState.gridColumns
+                rowsInput = rows.toString()
+                colsInput = cols.toString()
+                editorState.applyGridSize(rows, cols)
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Apply Grid Size") }
+
+        Text(
+            "Background Opacity  ${"%.0f".format(editorState.overlayBackgroundAlpha * 100)}%",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Slider(
+            value = editorState.overlayBackgroundAlpha,
+            onValueChange = { editorState.overlayBackgroundAlpha = it; editorState.hasUnsavedChanges = true },
+            valueRange = 0f..0.9f,
+        )
+    }
+}
+
+@Composable
+private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultFontPicker: () -> Unit) {
+    val normalizedColorHex = remember(editorState.defaultTextColorHex) {
+        normalizeHexColor(editorState.defaultTextColorHex)
+    }
+    val customHexValid = editorState.defaultTextColorHex.isNullOrBlank() || normalizedColorHex != null
+    val previewTextColor = when (editorState.defaultTextColorMode) {
+        DefaultTextColorMode.SYSTEM -> Color.Unspecified
+        DefaultTextColorMode.BLACK -> Color.Black
+        DefaultTextColorMode.WHITE -> Color.White
+        DefaultTextColorMode.CUSTOM -> normalizedColorHex?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color.Unspecified
+    }
+
+    Column(
+        modifier = Modifier
+            .width(280.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Default App Text Settings", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+
+        Text("Text size: ${"%.2f".format(editorState.defaultTextScale)}x", style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = editorState.defaultTextScale,
+            onValueChange = { editorState.defaultTextScale = it; editorState.hasUnsavedChanges = true },
+            valueRange = 0.5f..3.0f,
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Bold text", style = MaterialTheme.typography.bodySmall)
+            Switch(
+                checked = editorState.defaultBoldText,
+                onCheckedChange = { editorState.defaultBoldText = it; editorState.hasUnsavedChanges = true },
+            )
+        }
+
+        Text(
+            "Font: ${editorState.defaultFontName ?: "System default"}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = openDefaultFontPicker, modifier = Modifier.weight(1f)) { Text("Choose") }
+            OutlinedButton(
+                onClick = {
+                    editorState.defaultFontUri = null
+                    editorState.defaultFontName = null
+                    editorState.hasUnsavedChanges = true
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Clear") }
+        }
+
+        Text("Text Color", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+        val colorModeOptions = listOf(
+            "System" to DefaultTextColorMode.SYSTEM,
+            "Black" to DefaultTextColorMode.BLACK,
+            "White" to DefaultTextColorMode.WHITE,
+            "Custom" to DefaultTextColorMode.CUSTOM,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            colorModeOptions.chunked(2).forEach { rowItems ->
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    rowItems.forEach { (label, mode) ->
+                        val selected = editorState.defaultTextColorMode == mode
+                        OutlinedButton(
+                            onClick = { editorState.defaultTextColorMode = mode; editorState.hasUnsavedChanges = true },
+                            modifier = Modifier.weight(1f),
+                            colors = if (selected) androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            ) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors(),
+                        ) { Text(label, style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+            }
+        }
+        if (editorState.defaultTextColorMode == DefaultTextColorMode.CUSTOM) {
+            OutlinedTextField(
+                value = editorState.defaultTextColorHex ?: "",
+                onValueChange = {
+                    editorState.defaultTextColorHex = it.trim().take(9).ifBlank { null }
+                    editorState.hasUnsavedChanges = true
+                },
+                label = { Text("Hex color") },
+                placeholder = { Text("#FFFFFF") },
+                singleLine = true,
+                isError = !customHexValid,
+                supportingText = {
+                    Text(if (customHexValid) normalizedColorHex ?: "#RRGGBB / #AARRGGBB" else "Invalid hex")
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (editorState.defaultTextColorMode != DefaultTextColorMode.SYSTEM) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Surface(modifier = Modifier.size(24.dp), shape = MaterialTheme.shapes.small, color = previewTextColor) {}
+                Text("Preview", color = previewTextColor, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}

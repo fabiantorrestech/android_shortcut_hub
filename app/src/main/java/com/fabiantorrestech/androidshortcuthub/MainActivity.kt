@@ -190,6 +190,17 @@ fun MainScreen(modifier: Modifier = Modifier) {
         pendingEditorFontTileId = null
     }
 
+    // Launcher for the Layout editor's default font picker (appearance popup).
+    val editorDefaultFontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val displayName = resolveDisplayName(context.contentResolver, uri) ?: uri.lastPathSegment ?: "font"
+            OverlayEditorState.dispatchDefaultFontPicked(uri.toString(), displayName)
+        }
+    }
+
     val intentDetails = remember(context.packageName) {
         listOf(
             "Action: ${ShortcutHubOverlayService.ACTION_TOGGLE_OVERLAY}",
@@ -268,7 +279,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        if (selectedTab != 6) {
+        if (selectedTab != 3) {
             Text(
                 text = "Shortcut Hub",
                 style = MaterialTheme.typography.headlineMedium,
@@ -278,7 +289,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 selectedTabIndex = selectedTab,
                 edgePadding = 0.dp,
             ) {
-                listOf("Setup", "Grid", "Appearance", "Behavior", "Grayscale", "Backup", "Layout").forEachIndexed { index, title ->
+                listOf("Setup", "Behavior", "Grayscale", "Layout", "Backup").forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
                         onClick = {
@@ -340,46 +351,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     )
                 },
             )
-            1 -> GridTab(
-                config = config,
-                settingsMessage = settingsMessage,
-                onSaveGrid = { rows, columns ->
-                    config = config.copy(gridRows = rows, gridColumns = columns)
-                    ShortcutHubSettings.save(context, config)
-                    ShortcutHubSettings.pruneOutOfBoundsTiles(context, rows, columns)
-                    settingsMessage = "Grid settings saved"
-                },
-                onSaveOpacity = { alpha ->
-                    config = config.copy(overlayBackgroundAlpha = alpha)
-                    ShortcutHubSettings.save(context, config)
-                    settingsMessage = "Background opacity saved"
-                },
-            )
-            2 -> AppearanceTab(
-                config = config,
-                settingsMessage = settingsMessage,
-                onSaveTextSize = { scale ->
-                    config = config.copy(defaultTextScale = scale)
-                    ShortcutHubSettings.save(context, config)
-                    settingsMessage = "Default text size saved"
-                },
-                onToggleBold = { bold ->
-                    config = config.copy(defaultBoldText = bold)
-                    ShortcutHubSettings.save(context, config)
-                },
-                onPickFont = { fontPicker.launch(arrayOf("font/*", "application/octet-stream")) },
-                onClearFont = {
-                    config = config.copy(defaultFontUri = null, defaultFontName = null)
-                    ShortcutHubSettings.save(context, config)
-                    settingsMessage = "Default font cleared"
-                },
-                onSaveTextColor = { mode, hex ->
-                    config = config.copy(defaultTextColorMode = mode, defaultTextColorHex = hex)
-                    ShortcutHubSettings.save(context, config)
-                    settingsMessage = "Default text color saved"
-                },
-            )
-            3 -> BehaviorTab(
+            1 -> BehaviorTab(
                 config = config,
                 onConfigChange = { updated ->
                     config = updated
@@ -387,14 +359,42 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 },
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
             )
-            4 -> GrayscaleTab(
+            2 -> GrayscaleTab(
                 grayscaleConfig = grayscaleConfig,
                 onConfigChange = { updated ->
                     grayscaleConfig = updated
                     GrayscaleRepository.save(context, updated)
                 },
             )
-            5 -> BackupTab(
+            3 -> LayoutTab(
+                onBack = { selectedTab = 0; settingsMessage = null },
+                onOpenFontPicker = { tileId ->
+                    pendingEditorFontTileId = tileId
+                    editorFontPicker.launch(arrayOf("font/*", "application/octet-stream"))
+                },
+                onOpenIconPicker = { tileId ->
+                    pendingEditorIconTileId = tileId
+                    editorIconPicker.launch(arrayOf("image/*"))
+                },
+                onOpenDefaultFontPicker = {
+                    editorDefaultFontPicker.launch(arrayOf("font/*", "application/octet-stream"))
+                },
+                onSaveSettings = { committedState ->
+                    config = config.copy(
+                        gridRows = committedState.gridRows,
+                        gridColumns = committedState.gridColumns,
+                        overlayBackgroundAlpha = committedState.overlayBackgroundAlpha,
+                        defaultTextScale = committedState.defaultTextScale,
+                        defaultBoldText = committedState.defaultBoldText,
+                        defaultFontUri = committedState.defaultFontUri,
+                        defaultFontName = committedState.defaultFontName,
+                        defaultTextColorMode = committedState.defaultTextColorMode,
+                        defaultTextColorHex = committedState.defaultTextColorHex,
+                    )
+                    ShortcutHubSettings.save(context, config)
+                },
+            )
+            4 -> BackupTab(
                 statusMessage = settingsMessage,
                 autoBackupEnabled = autoBackupEnabled,
                 autoBackupDirectoryUri = autoBackupDirectoryUri,
@@ -410,17 +410,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 onImport = {
                     settingsMessage = null
                     importLauncher.launch(arrayOf("application/json", "*/*"))
-                },
-            )
-            6 -> LayoutTab(
-                onBack = { selectedTab = 0; settingsMessage = null },
-                onOpenFontPicker = { tileId ->
-                    pendingEditorFontTileId = tileId
-                    editorFontPicker.launch(arrayOf("font/*", "application/octet-stream"))
-                },
-                onOpenIconPicker = { tileId ->
-                    pendingEditorIconTileId = tileId
-                    editorIconPicker.launch(arrayOf("image/*"))
                 },
             )
         }
@@ -1073,6 +1062,8 @@ private fun LayoutTab(
     onBack: () -> Unit,
     onOpenFontPicker: (tileId: Int) -> Unit,
     onOpenIconPicker: (tileId: Int) -> Unit,
+    onOpenDefaultFontPicker: () -> Unit,
+    onSaveSettings: (OverlayUiState) -> Unit,
 ) {
     val context = LocalContext.current
     // remember { } so that draft state persists while the user switches between tabs
@@ -1085,12 +1076,14 @@ private fun LayoutTab(
         onBack = onBack,
         onSave = { committedState ->
             OverlayStateRepository.save(context, committedState)
+            onSaveSettings(committedState)
             Toast.makeText(context, "Layout saved. Toggle the overlay to apply.", Toast.LENGTH_SHORT).show()
             onBack()
         },
         onDiscard = { onBack() },
         openFontPicker = onOpenFontPicker,
         openIconPicker = onOpenIconPicker,
+        openDefaultFontPicker = onOpenDefaultFontPicker,
         fontEvents = ShortcutHubOverlayService.tileFontSelectionEvents(),
         iconEvents = ShortcutHubOverlayService.tileIconSelectionEvents(),
     )
