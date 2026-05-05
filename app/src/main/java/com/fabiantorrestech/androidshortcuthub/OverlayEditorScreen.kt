@@ -184,7 +184,7 @@ internal fun OverlayEditorScreen(
                     preloadedFonts = emptyMap(),
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(8.dp),
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
                 )
             }
