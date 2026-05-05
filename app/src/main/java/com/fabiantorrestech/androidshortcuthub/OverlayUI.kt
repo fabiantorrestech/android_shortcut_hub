@@ -322,7 +322,7 @@ internal data class MaterialIconOption(
     val imageVector: ImageVector,
 )
 
-private val materialIconOptions = listOf(
+internal val materialIconOptions = listOf(
     MaterialIconOption("home", "Home", Icons.Outlined.Home),
     MaterialIconOption("search", "Search", Icons.Outlined.Search),
     MaterialIconOption("settings", "Settings", Icons.Outlined.Settings),
