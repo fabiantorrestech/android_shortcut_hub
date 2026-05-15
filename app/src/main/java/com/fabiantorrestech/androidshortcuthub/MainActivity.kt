@@ -78,6 +78,7 @@ import com.fabiantorrestech.androidshortcuthub.ui.theme.ShortcutHubTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        (application as? ShortcutHubApplication)?.prepareOverlayRuntimeIfEligible()
         enableEdgeToEdge()
         setContent {
             ShortcutHubTheme {

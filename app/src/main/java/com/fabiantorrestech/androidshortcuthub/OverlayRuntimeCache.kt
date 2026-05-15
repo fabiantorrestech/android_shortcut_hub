@@ -49,10 +49,7 @@ internal object OverlayRuntimeCache {
         state: OverlayUiState,
         loadFontFamily: (String?) -> FontFamily?,
     ): Map<String, FontFamily?> {
-        val requiredUris = buildSet<String> {
-            state.defaultFontUri?.let { add(it) }
-            state.tiles.forEach { it.customFontUri?.let(::add) }
-        }
+        val requiredUris = requiredFontUris(state)
 
         val loadedFonts = LinkedHashMap<String, FontFamily?>()
         requiredUris.forEach { uri ->
@@ -72,4 +69,23 @@ internal object OverlayRuntimeCache {
         }
         return loadedFonts
     }
+
+    internal fun cachedFontsFor(state: OverlayUiState): Map<String, FontFamily?> {
+        val requiredUris = requiredFontUris(state)
+        return synchronized(fontLock) {
+            buildMap {
+                requiredUris.forEach { uri ->
+                    if (cachedFonts.containsKey(uri)) {
+                        put(uri, cachedFonts[uri])
+                    }
+                }
+            }
+        }
+    }
+
+    private fun requiredFontUris(state: OverlayUiState): Set<String> =
+        buildSet {
+            state.defaultFontUri?.let { add(it) }
+            state.tiles.forEach { it.customFontUri?.let(::add) }
+        }
 }

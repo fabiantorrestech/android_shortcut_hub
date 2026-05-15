@@ -20,6 +20,8 @@ class ShortcutHubApplication : Application() {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var autoBackupJob: Job? = null
+    @Volatile
+    private var overlayRuntimePrepared = false
 
     // Held as a field — SharedPreferences only holds weak references to listeners.
     private val prefsChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -28,11 +30,19 @@ class ShortcutHubApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        val widgetHost = ShortcutHubWidgetHost.getInstance(this)
-        widgetHost.startListening(this)
-        cleanOrphanWidgetIds(widgetHost)
-        warmOverlayServiceIfEligible()
         registerAutoBackupListeners()
+    }
+
+    internal fun prepareOverlayRuntimeIfEligible() {
+        if (overlayRuntimePrepared) return
+        synchronized(this) {
+            if (overlayRuntimePrepared) return
+            val widgetHost = ShortcutHubWidgetHost.getInstance(this)
+            widgetHost.startListening(this)
+            cleanOrphanWidgetIds(widgetHost)
+            warmOverlayServiceIfEligible()
+            overlayRuntimePrepared = true
+        }
     }
 
     private fun registerAutoBackupListeners() {

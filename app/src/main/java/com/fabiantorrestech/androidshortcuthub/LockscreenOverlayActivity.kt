@@ -53,6 +53,7 @@ class LockscreenOverlayActivity : ComponentActivity() {
             }
         }
     }
+    private var widgetHostListening = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,18 +75,12 @@ class LockscreenOverlayActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             val startMs = SystemClock.elapsedRealtime()
-            val stateStartMs = SystemClock.elapsedRealtime()
             val initialState = withContext(Dispatchers.IO) { OverlayStateRepository.load(this@LockscreenOverlayActivity) }
-            val stateElapsedMs = SystemClock.elapsedRealtime() - stateStartMs
-
-            val fontStartMs = SystemClock.elapsedRealtime()
-            val preloadedFonts: Map<String, FontFamily?> = withContext(Dispatchers.IO) {
-                OverlayRuntimeCache.preloadFonts(initialState, ::loadFontFamily)
-            }
-            val fontElapsedMs = SystemClock.elapsedRealtime() - fontStartMs
+            val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(initialState)
 
             if (isFinishing) return@launch
 
+            ensureWidgetHostStartedIfNeeded(initialState)
             setContent {
                 ShortcutHubTheme {
                     OverlayContent(
@@ -120,10 +115,10 @@ class LockscreenOverlayActivity : ComponentActivity() {
                     )
                 }
             }
+            warmFontsAsync(initialState)
             Log.d(
                 TAG,
-                "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms " +
-                    "(state=${stateElapsedMs}ms, fonts=${fontElapsedMs}ms)",
+                "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms",
             )
         }
     }
@@ -131,8 +126,27 @@ class LockscreenOverlayActivity : ComponentActivity() {
     override fun onDestroy() {
         unregisterReceiver(screenOffReceiver)
         unregisterReceiver(systemUiDismissReceiver)
+        stopWidgetHostListeningIfNeeded()
         if (instanceRef.get() == this) instanceRef = WeakReference(null)
         super.onDestroy()
+    }
+
+    private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
+        if (widgetHostListening || state.tiles.none { it is WidgetTileState }) return
+        ShortcutHubWidgetHost.getInstance(this).startListening(this)
+        widgetHostListening = true
+    }
+
+    private fun stopWidgetHostListeningIfNeeded() {
+        if (!widgetHostListening) return
+        ShortcutHubWidgetHost.getInstance(this).stopListening(this)
+        widgetHostListening = false
+    }
+
+    private fun warmFontsAsync(state: OverlayUiState) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
+        }
     }
 
     private fun loadFontFamily(uriString: String?): FontFamily? {
