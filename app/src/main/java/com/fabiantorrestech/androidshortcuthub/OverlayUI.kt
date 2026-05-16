@@ -77,6 +77,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -111,11 +114,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
@@ -433,6 +439,7 @@ internal data class OverlayUiState(
     val showPanelHandle: Boolean = true,
     val overlayBackgroundAlpha: Float = 0.33f,
     val showOverLockscreen: Boolean = false,
+    val launchAnimationEnabled: Boolean = true,
 )
 
 // ── Utility ──────────────────────────────────────────────────────────────────
@@ -479,6 +486,22 @@ internal fun OverlayContent(
     var isPanelVisible by remember { mutableStateOf(false) }
     var isMoveMode by remember { mutableStateOf(false) }
     var sheetVisible by remember { mutableStateOf(false) }
+
+    // Animation state
+    val animEnabled = initialState.launchAnimationEnabled
+    var enterVisible by remember { mutableStateOf(!animEnabled) }
+    var exitRequested by remember { mutableStateOf(false) }
+    val animAlpha by animateFloatAsState(
+        targetValue = when { exitRequested -> 0f; enterVisible -> 1f; else -> 0f },
+        animationSpec = tween(durationMillis = if (exitRequested) 280 else 320),
+        label = "overlayAlpha",
+    )
+    val animBlur by animateDpAsState(
+        targetValue = when { exitRequested -> 28.dp; enterVisible -> 0.dp; else -> 28.dp },
+        animationSpec = tween(durationMillis = if (exitRequested) 280 else 320),
+        label = "overlayBlur",
+    )
+    val requestDismiss: () -> Unit = if (animEnabled) ({ exitRequested = true }) else onDismiss
 
     // App chooser state
     var choosingAppForTileId by remember { mutableStateOf<Int?>(null) }
@@ -766,7 +789,7 @@ internal fun OverlayContent(
 
     fun openWidgetPicker() {
         WidgetBindingCoordinator.startBinding()
-        onDismiss()
+        requestDismiss()
         val hasVolumeSlider = tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
         val hasBrightnessSlider = tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
         context.startActivity(
@@ -828,6 +851,16 @@ internal fun OverlayContent(
     }
 
     // ── Effects ──────────────────────────────────────────────────────────────
+
+    LaunchedEffect(Unit) {
+        if (animEnabled) enterVisible = true
+    }
+    LaunchedEffect(exitRequested) {
+        if (exitRequested) {
+            delay(280)
+            onDismiss()
+        }
+    }
 
     LaunchedEffect(initialState.defaultFontUri) {
         if (defaultFontFamily == null && initialState.defaultFontUri != null) {
@@ -987,6 +1020,7 @@ internal fun OverlayContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .then(if (animEnabled) Modifier.graphicsLayer { alpha = animAlpha }.blur(animBlur) else Modifier)
             .pointerInput(sheetVisible) {
                 val edgeZonePx = 24.dp.toPx()
                 val sliderProtectionPaddingPx = 16.dp.toPx()
@@ -1004,7 +1038,7 @@ internal fun OverlayContent(
                         ).contains(down.position)
                     }
                     if (inProtectedSliderZone) return@awaitEachGesture
-                    if (sheetVisible) { sheetVisible = false; selectedTileId = null } else onDismiss()
+                    if (sheetVisible) { sheetVisible = false; selectedTileId = null } else requestDismiss()
                 }
             },
     ) {
@@ -1067,7 +1101,7 @@ internal fun OverlayContent(
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Surface(
-                                    onClick = { openMainApp(); onDismiss() },
+                                    onClick = { openMainApp(); requestDismiss() },
                                     modifier = Modifier.align(Alignment.CenterEnd).size(28.dp),
                                     color = Color.Transparent,
                                     shape = RoundedCornerShape(8.dp),
@@ -1093,7 +1127,7 @@ internal fun OverlayContent(
                                 }) { Text("App") }
                                 OutlinedButton(onClick = { openWidgetPicker() }) { Text("Widget") }
                                 OutlinedButton(onClick = { openIntentFormForNew() }) { Text("Intent") }
-                                OutlinedButton(onClick = onDismiss) { Text("Close") }
+                                OutlinedButton(onClick = requestDismiss) { Text("Close") }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(onClick = {
@@ -1144,8 +1178,8 @@ internal fun OverlayContent(
             onTileSelect = { id -> selectedTileId = id; sheetVisible = true },
             onTileTap = { tile ->
                 when (tile) {
-                    is AppTileState -> { launchApp(tile.app); onDismiss() }
-                    is IntentTileState -> { launchIntent(tile); onDismiss() }
+                    is AppTileState -> { launchApp(tile.app); requestDismiss() }
+                    is IntentTileState -> { launchIntent(tile); requestDismiss() }
                     else -> Unit
                 }
             },

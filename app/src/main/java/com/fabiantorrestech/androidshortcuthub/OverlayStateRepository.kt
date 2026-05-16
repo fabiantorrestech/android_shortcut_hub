@@ -130,6 +130,7 @@ internal object OverlayStateRepository {
         showPanelHandle = config.showPanelHandle,
         overlayBackgroundAlpha = config.overlayBackgroundAlpha,
         showOverLockscreen = config.showOverLockscreen,
+        launchAnimationEnabled = config.launchAnimationEnabled,
     )
 
     private fun parseState(
@@ -312,6 +313,7 @@ internal object OverlayStateRepository {
             showPanelHandle = config.showPanelHandle,
             overlayBackgroundAlpha = config.overlayBackgroundAlpha,
             showOverLockscreen = config.showOverLockscreen,
+            launchAnimationEnabled = config.launchAnimationEnabled,
         )
     }.getOrDefault(defaultState)
 }

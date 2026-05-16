@@ -765,6 +765,11 @@ private fun BehaviorTab(
             ) {
                 Text("Behavior", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
                 SettingToggleRow(
+                    label = "Open/close animation",
+                    checked = config.launchAnimationEnabled,
+                    onCheckedChange = { onConfigChange(config.copy(launchAnimationEnabled = it)) },
+                )
+                SettingToggleRow(
                     label = "Cover status bar",
                     description = if (isAccessibilityServiceEnabled) "Overlay will appear above the status bar"
                                   else "Requires Accessibility Service to be enabled",

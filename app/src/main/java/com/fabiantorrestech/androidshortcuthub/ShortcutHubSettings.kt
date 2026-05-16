@@ -21,6 +21,7 @@ private const val KEY_SHOW_OVER_LOCKSCREEN = "show_over_lockscreen"
 private const val KEY_DISMISS_ACCESSIBILITY_BANNER = "dismiss_accessibility_banner"
 private const val KEY_USE_ACCESSIBILITY_SERVICE = "use_accessibility_service"
 private const val KEY_DISMISS_ON_SCREEN_OFF = "dismiss_on_screen_off"
+private const val KEY_LAUNCH_ANIMATION_ENABLED = "launch_animation_enabled"
 
 enum class DefaultTextColorMode {
     SYSTEM,
@@ -46,6 +47,7 @@ data class ShortcutHubConfig(
     val dismissAccessibilityBanner: Boolean = false,
     val useAccessibilityService: Boolean = false,
     val dismissOnScreenOff: Boolean = true,
+    val launchAnimationEnabled: Boolean = true,
 )
 
 object ShortcutHubSettings {
@@ -73,6 +75,7 @@ object ShortcutHubSettings {
             dismissAccessibilityBanner = prefs.getBoolean(KEY_DISMISS_ACCESSIBILITY_BANNER, false),
             useAccessibilityService = prefs.getBoolean(KEY_USE_ACCESSIBILITY_SERVICE, false),
             dismissOnScreenOff = prefs.getBoolean(KEY_DISMISS_ON_SCREEN_OFF, true),
+            launchAnimationEnabled = prefs.getBoolean(KEY_LAUNCH_ANIMATION_ENABLED, true),
         )
     }
 
@@ -95,6 +98,7 @@ object ShortcutHubSettings {
             .putBoolean(KEY_DISMISS_ACCESSIBILITY_BANNER, config.dismissAccessibilityBanner)
             .putBoolean(KEY_USE_ACCESSIBILITY_SERVICE, config.useAccessibilityService)
             .putBoolean(KEY_DISMISS_ON_SCREEN_OFF, config.dismissOnScreenOff)
+            .putBoolean(KEY_LAUNCH_ANIMATION_ENABLED, config.launchAnimationEnabled)
             .apply()
     }
 
