@@ -1073,16 +1073,19 @@ private fun LayoutTab(
 ) {
     val context = LocalContext.current
     // remember { } so that draft state persists while the user switches between tabs
-    val editorState = remember {
-        OverlayEditorState(OverlayStateRepository.load(context))
+    val (portraitEditorState, landscapeEditorState) = remember {
+        val (portrait, landscape) = OverlayStateRepository.loadBoth(context)
+        OverlayEditorState(portrait) to OverlayEditorState(landscape)
     }
 
     OverlayEditorScreen(
-        editorState = editorState,
+        portraitEditorState = portraitEditorState,
+        landscapeEditorState = landscapeEditorState,
         onBack = onBack,
-        onSave = { committedState ->
-            OverlayStateRepository.save(context, committedState)
-            onSaveSettings(committedState)
+        onSave = { portraitCommitted, landscapeCommitted ->
+            OverlayStateRepository.saveLayout(context, portraitCommitted, OverlayOrientation.PORTRAIT)
+            OverlayStateRepository.saveLayout(context, landscapeCommitted, OverlayOrientation.LANDSCAPE)
+            onSaveSettings(portraitCommitted)
             Toast.makeText(context, "Layout saved. Toggle the overlay to apply.", Toast.LENGTH_SHORT).show()
             onBack()
         },

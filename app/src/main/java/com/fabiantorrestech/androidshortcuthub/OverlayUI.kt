@@ -1,5 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.graphics.drawable.BitmapDrawable
@@ -81,6 +82,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -146,6 +148,8 @@ internal const val ICON_SCALE_MAX = 3.0f
 internal const val PANEL_HANDLE_SIZE_DP = 44
 internal const val DPAD_SIZE_DP = 156
 internal const val DPAD_BUTTON_SIZE_DP = 40
+
+internal enum class OverlayOrientation { PORTRAIT, LANDSCAPE }
 
 // ── Data model ───────────────────────────────────────────────────────────────
 
@@ -442,6 +446,54 @@ internal data class OverlayUiState(
     val launchAnimationEnabled: Boolean = true,
 )
 
+internal data class OverlayOrientationLayout(
+    val showGrid: Boolean = false,
+    val gridRows: Int = 8,
+    val gridColumns: Int = 4,
+    val dpadOffsetX: Float = 24f,
+    val dpadOffsetY: Float = 220f,
+    val topPanelOffsetX: Float = 16f,
+    val topPanelOffsetY: Float = 16f,
+    val nextTileId: Int = 1,
+    val tiles: List<TileState> = emptyList(),
+)
+
+internal fun OverlayOrientationLayout.mergeWithConfig(config: ShortcutHubConfig): OverlayUiState = OverlayUiState(
+    showGrid = showGrid,
+    gridRows = gridRows,
+    gridColumns = gridColumns,
+    dpadOffsetX = dpadOffsetX,
+    dpadOffsetY = dpadOffsetY,
+    topPanelOffsetX = topPanelOffsetX,
+    topPanelOffsetY = topPanelOffsetY,
+    nextTileId = nextTileId,
+    tiles = tiles,
+    defaultTextScale = config.defaultTextScale,
+    defaultBoldText = config.defaultBoldText,
+    defaultFontUri = config.defaultFontUri,
+    defaultFontName = config.defaultFontName,
+    defaultTextColorMode = config.defaultTextColorMode,
+    defaultTextColorHex = config.defaultTextColorHex,
+    hapticFeedbackEnabled = config.hapticFeedbackEnabled,
+    panelHandleLocked = config.panelHandleLocked,
+    showPanelHandle = config.showPanelHandle,
+    overlayBackgroundAlpha = config.overlayBackgroundAlpha,
+    showOverLockscreen = config.showOverLockscreen,
+    launchAnimationEnabled = config.launchAnimationEnabled,
+)
+
+internal fun OverlayUiState.extractLayout(): OverlayOrientationLayout = OverlayOrientationLayout(
+    showGrid = showGrid,
+    gridRows = gridRows,
+    gridColumns = gridColumns,
+    dpadOffsetX = dpadOffsetX,
+    dpadOffsetY = dpadOffsetY,
+    topPanelOffsetX = topPanelOffsetX,
+    topPanelOffsetY = topPanelOffsetY,
+    nextTileId = nextTileId,
+    tiles = tiles,
+)
+
 // ── Utility ──────────────────────────────────────────────────────────────────
 
 internal fun findTile(tiles: List<TileState>, id: Int?): TileState? =
@@ -452,7 +504,8 @@ internal fun findTile(tiles: List<TileState>, id: Int?): TileState? =
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun OverlayContent(
-    initialState: OverlayUiState,
+    portraitState: OverlayUiState,
+    landscapeState: OverlayUiState,
     preloadedFonts: Map<String, FontFamily?>,
     tileFontEvents: Flow<TileFontSelection>,
     tileIconEvents: Flow<TileIconSelection>,
@@ -464,15 +517,20 @@ internal fun OverlayContent(
     openTileIconPicker: (Int) -> Unit,
     launchApp: (LaunchableApp) -> Unit,
     launchIntent: (IntentTileState) -> Unit,
-    onPersist: (OverlayUiState) -> Unit,
+    onPersist: (OverlayUiState, OverlayOrientation) -> Unit,
     onDismiss: () -> Unit,
     onKeyboardInputToggle: (Boolean) -> Unit = {},
     grayscaleFrame: Flow<Bitmap?> = kotlinx.coroutines.flow.MutableStateFlow(null),
     grayscaleConfig: GrayscaleConfig = GrayscaleConfig(),
     foregroundPackage: Flow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
 ) {
-    val context = LocalContext.current
     val configuration = LocalConfiguration.current
+    val activeOrientation = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
+        OverlayOrientation.LANDSCAPE else OverlayOrientation.PORTRAIT
+    val initialState = if (activeOrientation == OverlayOrientation.LANDSCAPE) landscapeState else portraitState
+
+    key(activeOrientation) {
+    val context = LocalContext.current
     val appWidgetManager = remember(context) { AppWidgetManager.getInstance(context) }
     // ── State ────────────────────────────────────────────────────────────────
     val tiles = remember { mutableStateListOf<TileState>().apply { addAll(initialState.tiles) } }
@@ -578,6 +636,7 @@ internal fun OverlayContent(
                 overlayBackgroundAlpha = initialState.overlayBackgroundAlpha,
                 showOverLockscreen = initialState.showOverLockscreen,
             ),
+            activeOrientation,
         )
     }
 
@@ -1636,6 +1695,7 @@ internal fun OverlayContent(
             }
         }
     }
+    } // end key(activeOrientation)
 }
 
 internal fun Drawable.asBitmapPainter(): Painter? = runCatching {

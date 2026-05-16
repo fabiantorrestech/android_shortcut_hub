@@ -155,12 +155,12 @@ class ShortcutHubOverlayService : Service() {
             try {
                 // Load state and grayscale config concurrently — they read different prefs files.
                 val stateDeferred = async(Dispatchers.IO) {
-                    OverlayStateRepository.load(this@ShortcutHubOverlayService)
+                    OverlayStateRepository.loadBoth(this@ShortcutHubOverlayService)
                 }
                 val grayscaleDeferred = async(Dispatchers.IO) {
                     GrayscaleRepository.load(this@ShortcutHubOverlayService)
                 }
-                val initialState = stateDeferred.await()
+                val (portraitState, landscapeState) = stateDeferred.await()
                 val grayscaleConfig = grayscaleDeferred.await()
                 val simpleGrayscaleFrame = MutableStateFlow<android.graphics.Bitmap?>(null)
                 val grayscaleFrame =
@@ -169,8 +169,8 @@ class ShortcutHubOverlayService : Service() {
                     } else {
                         simpleGrayscaleFrame
                     }
-                val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(initialState)
-                ensureWidgetHostStartedIfNeeded(initialState)
+                val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(portraitState, landscapeState)
+                ensureWidgetHostStartedIfNeeded(portraitState)
 
                 val lifecycleOwner = OverlayLifecycleOwner().also {
                     it.start()
@@ -184,7 +184,8 @@ class ShortcutHubOverlayService : Service() {
                     setContent {
                         ShortcutHubTheme {
                             OverlayContent(
-                                initialState = initialState,
+                                portraitState = portraitState,
+                                landscapeState = landscapeState,
                                 preloadedFonts = preloadedFonts,
                                 tileFontEvents = tileFontSelectionEvents(),
                                 tileIconEvents = tileIconSelectionEvents(),
@@ -210,7 +211,9 @@ class ShortcutHubOverlayService : Service() {
                                 },
                                 launchApp = ::launchApp,
                                 launchIntent = ::launchIntent,
-                                onPersist = { OverlayStateRepository.save(this@ShortcutHubOverlayService, it) },
+                                onPersist = { state, orientation ->
+                                    OverlayStateRepository.saveLayout(this@ShortcutHubOverlayService, state, orientation)
+                                },
                                 onDismiss = { dismissOverlay() },
                                 onKeyboardInputToggle = { needsKeyboard ->
                                     val p = overlayParams ?: return@OverlayContent
@@ -240,7 +243,7 @@ class ShortcutHubOverlayService : Service() {
                 }
 
                 @Suppress("DEPRECATION")
-                val windowFlags = if (initialState.showOverLockscreen) {
+                val windowFlags = if (portraitState.showOverLockscreen) {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                         WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
@@ -261,7 +264,7 @@ class ShortcutHubOverlayService : Service() {
                 overlayView = composeView
                 overlayParams = params
                 windowManager.addView(composeView, params)
-                warmFontsAsync(initialState)
+                warmFontsAsync(portraitState, landscapeState)
                 initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
                 syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
@@ -293,9 +296,9 @@ class ShortcutHubOverlayService : Service() {
         widgetHostListening = false
     }
 
-    private fun warmFontsAsync(state: OverlayUiState) {
+    private fun warmFontsAsync(portraitState: OverlayUiState, landscapeState: OverlayUiState) {
         serviceScope.launch(Dispatchers.IO) {
-            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
+            OverlayRuntimeCache.preloadFonts(portraitState, landscapeState, ::loadFontFamily)
         }
     }
 

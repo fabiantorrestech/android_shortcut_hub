@@ -7,59 +7,53 @@ internal object OverlayRuntimeCache {
     private val fontLock = Any()
 
     private var cachedRawState: String? = null
-    private var cachedConfig: ShortcutHubConfig? = null
-    private var cachedOverlayState: OverlayUiState? = null
+    private var cachedPortraitLayout: OverlayOrientationLayout? = null
+    private var cachedLandscapeLayout: OverlayOrientationLayout? = null
 
     private val cachedFonts = HashMap<String, FontFamily?>()
 
-    internal fun getOrLoadState(
-        rawState: String?,
-        config: ShortcutHubConfig,
-        loader: () -> OverlayUiState,
-    ): OverlayUiState {
+    internal fun getCachedLayouts(rawState: String?): Pair<OverlayOrientationLayout, OverlayOrientationLayout?>? {
         synchronized(stateLock) {
-            val cached = cachedOverlayState
-            if (cached != null && cachedRawState == rawState && cachedConfig == config) {
-                return cached
+            if (cachedPortraitLayout != null && cachedRawState == rawState) {
+                return cachedPortraitLayout!! to cachedLandscapeLayout
             }
+            return null
         }
-
-        val loaded = loader()
-        synchronized(stateLock) {
-            cachedRawState = rawState
-            cachedConfig = config
-            cachedOverlayState = loaded
-        }
-        return loaded
     }
 
-    internal fun updateState(
+    internal fun updateLayouts(
         rawState: String?,
-        config: ShortcutHubConfig,
-        state: OverlayUiState,
+        portrait: OverlayOrientationLayout,
+        landscape: OverlayOrientationLayout?,
     ) {
         synchronized(stateLock) {
             cachedRawState = rawState
-            cachedConfig = config
-            cachedOverlayState = state
+            cachedPortraitLayout = portrait
+            cachedLandscapeLayout = landscape
+        }
+    }
+
+    internal fun invalidate() {
+        synchronized(stateLock) {
+            cachedRawState = null
+            cachedPortraitLayout = null
+            cachedLandscapeLayout = null
         }
     }
 
     internal fun preloadFonts(
-        state: OverlayUiState,
+        portraitState: OverlayUiState,
+        landscapeState: OverlayUiState,
         loadFontFamily: (String?) -> FontFamily?,
     ): Map<String, FontFamily?> {
-        val requiredUris = requiredFontUris(state)
-
+        val requiredUris = requiredFontUris(portraitState) + requiredFontUris(landscapeState)
         val loadedFonts = LinkedHashMap<String, FontFamily?>()
         requiredUris.forEach { uri ->
             val alreadyCached = synchronized(fontLock) {
                 if (cachedFonts.containsKey(uri)) {
                     loadedFonts[uri] = cachedFonts[uri]
                     true
-                } else {
-                    false
-                }
+                } else false
             }
             if (!alreadyCached) {
                 val loaded = loadFontFamily(uri)
@@ -70,22 +64,30 @@ internal object OverlayRuntimeCache {
         return loadedFonts
     }
 
-    internal fun cachedFontsFor(state: OverlayUiState): Map<String, FontFamily?> {
-        val requiredUris = requiredFontUris(state)
+    internal fun preloadFonts(
+        state: OverlayUiState,
+        loadFontFamily: (String?) -> FontFamily?,
+    ): Map<String, FontFamily?> = preloadFonts(state, state, loadFontFamily)
+
+    internal fun cachedFontsFor(
+        portraitState: OverlayUiState,
+        landscapeState: OverlayUiState,
+    ): Map<String, FontFamily?> {
+        val requiredUris = requiredFontUris(portraitState) + requiredFontUris(landscapeState)
         return synchronized(fontLock) {
             buildMap {
                 requiredUris.forEach { uri ->
-                    if (cachedFonts.containsKey(uri)) {
-                        put(uri, cachedFonts[uri])
-                    }
+                    if (cachedFonts.containsKey(uri)) put(uri, cachedFonts[uri])
                 }
             }
         }
     }
 
-    private fun requiredFontUris(state: OverlayUiState): Set<String> =
-        buildSet {
-            state.defaultFontUri?.let { add(it) }
-            state.tiles.forEach { it.customFontUri?.let(::add) }
-        }
+    internal fun cachedFontsFor(state: OverlayUiState): Map<String, FontFamily?> =
+        cachedFontsFor(state, state)
+
+    private fun requiredFontUris(state: OverlayUiState): Set<String> = buildSet {
+        state.defaultFontUri?.let { add(it) }
+        state.tiles.forEach { it.customFontUri?.let(::add) }
+    }
 }

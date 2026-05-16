@@ -109,8 +109,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
         // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
         serviceScope.launch(Dispatchers.IO) {
-            val state = OverlayStateRepository.load(this@ShortcutHubAccessibilityService)
-            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
+            val (portrait, landscape) = OverlayStateRepository.loadBoth(this@ShortcutHubAccessibilityService)
+            OverlayRuntimeCache.preloadFonts(portrait, landscape, ::loadFontFamily)
         }
     }
 
@@ -209,12 +209,12 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             try {
                 // Load state and grayscale config concurrently — they read different prefs files.
                 val stateDeferred = async(Dispatchers.IO) {
-                    OverlayStateRepository.load(this@ShortcutHubAccessibilityService)
+                    OverlayStateRepository.loadBoth(this@ShortcutHubAccessibilityService)
                 }
                 val grayscaleDeferred = async(Dispatchers.IO) {
                     GrayscaleRepository.load(this@ShortcutHubAccessibilityService)
                 }
-                val initialState = stateDeferred.await()
+                val (portraitState, landscapeState) = stateDeferred.await()
                 val grayscaleConfig = grayscaleDeferred.await()
 
                 val simpleGrayscaleFrame = MutableStateFlow<Bitmap?>(null)
@@ -224,8 +224,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                     } else {
                         simpleGrayscaleFrame
                     }
-                val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(initialState)
-                ensureWidgetHostStartedIfNeeded(initialState)
+                val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(portraitState, landscapeState)
+                ensureWidgetHostStartedIfNeeded(portraitState)
 
                 val lifecycleOwner = OverlayLifecycleOwner().also {
                     it.start()
@@ -239,7 +239,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                     setContent {
                         ShortcutHubTheme {
                             OverlayContent(
-                                initialState = initialState,
+                                portraitState = portraitState,
+                                landscapeState = landscapeState,
                                 preloadedFonts = preloadedFonts,
                                 tileFontEvents = ShortcutHubOverlayService.tileFontSelectionEvents(),
                                 tileIconEvents = ShortcutHubOverlayService.tileIconSelectionEvents(),
@@ -265,7 +266,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                                 },
                                 launchApp = ::launchApp,
                                 launchIntent = ::launchIntent,
-                                onPersist = { OverlayStateRepository.save(this@ShortcutHubAccessibilityService, it) },
+                                onPersist = { state, orientation ->
+                                    OverlayStateRepository.saveLayout(this@ShortcutHubAccessibilityService, state, orientation)
+                                },
                                 onDismiss = ::dismissOverlay,
                                 onKeyboardInputToggle = { needsKeyboard ->
                                     val p = overlayParams ?: return@OverlayContent
@@ -321,7 +324,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 overlayView = composeView
                 overlayParams = params
                 windowManager.addView(composeView, params)
-                warmFontsAsync(initialState)
+                warmFontsAsync(portraitState, landscapeState)
                 initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
                 syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
@@ -353,9 +356,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         widgetHostListening = false
     }
 
-    private fun warmFontsAsync(state: OverlayUiState) {
+    private fun warmFontsAsync(portraitState: OverlayUiState, landscapeState: OverlayUiState) {
         serviceScope.launch(Dispatchers.IO) {
-            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
+            OverlayRuntimeCache.preloadFonts(portraitState, landscapeState, ::loadFontFamily)
         }
     }
 

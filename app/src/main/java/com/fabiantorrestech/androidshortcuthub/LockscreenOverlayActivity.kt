@@ -75,16 +75,19 @@ class LockscreenOverlayActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             val startMs = SystemClock.elapsedRealtime()
-            val initialState = withContext(Dispatchers.IO) { OverlayStateRepository.load(this@LockscreenOverlayActivity) }
-            val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(initialState)
+            val (portraitState, landscapeState) = withContext(Dispatchers.IO) {
+                OverlayStateRepository.loadBoth(this@LockscreenOverlayActivity)
+            }
+            val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(portraitState, landscapeState)
 
             if (isFinishing) return@launch
 
-            ensureWidgetHostStartedIfNeeded(initialState)
+            ensureWidgetHostStartedIfNeeded(portraitState)
             setContent {
                 ShortcutHubTheme {
                     OverlayContent(
-                        initialState = initialState,
+                        portraitState = portraitState,
+                        landscapeState = landscapeState,
                         preloadedFonts = preloadedFonts,
                         tileFontEvents = ShortcutHubOverlayService.tileFontSelectionEvents(),
                         tileIconEvents = ShortcutHubOverlayService.tileIconSelectionEvents(),
@@ -110,12 +113,14 @@ class LockscreenOverlayActivity : ComponentActivity() {
                         },
                         launchApp = ::launchApp,
                         launchIntent = ::launchIntent,
-                        onPersist = { OverlayStateRepository.save(this@LockscreenOverlayActivity, it) },
+                        onPersist = { state, orientation ->
+                            OverlayStateRepository.saveLayout(this@LockscreenOverlayActivity, state, orientation)
+                        },
                         onDismiss = ::finish,
                     )
                 }
             }
-            warmFontsAsync(initialState)
+            warmFontsAsync(portraitState, landscapeState)
             Log.d(
                 TAG,
                 "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms",
@@ -143,9 +148,9 @@ class LockscreenOverlayActivity : ComponentActivity() {
         widgetHostListening = false
     }
 
-    private fun warmFontsAsync(state: OverlayUiState) {
+    private fun warmFontsAsync(portraitState: OverlayUiState, landscapeState: OverlayUiState) {
         lifecycleScope.launch(Dispatchers.IO) {
-            OverlayRuntimeCache.preloadFonts(state, ::loadFontFamily)
+            OverlayRuntimeCache.preloadFonts(portraitState, landscapeState, ::loadFontFamily)
         }
     }
 
