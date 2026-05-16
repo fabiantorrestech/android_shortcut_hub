@@ -990,13 +990,13 @@ internal fun OverlayContent(
                 persist()
             }
             is TileInsertionEvent.SystemSliderAdded -> {
-                val alreadyExists = tiles.any {
+                val count = tiles.count {
                     it is SystemSliderTileState && it.config.sliderType == event.config.sliderType
                 }
-                if (alreadyExists) {
+                if (count >= 2) {
                     Toast.makeText(
                         context,
-                        "A ${event.config.sliderType.name.lowercase()} slider is already on the grid",
+                        "Maximum 2 ${event.config.sliderType.name.lowercase()} sliders allowed",
                         Toast.LENGTH_SHORT,
                     ).show()
                     return@LaunchedEffect

@@ -482,11 +482,11 @@ internal fun OverlayEditorScreen(
 
             // + Volume Slider
             OutlinedButton(onClick = {
-                val alreadyExists = editorState.tiles.any {
+                val count = editorState.tiles.count {
                     it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
                 }
-                if (alreadyExists) {
-                    Toast.makeText(context, "A volume slider is already on the grid", Toast.LENGTH_SHORT).show()
+                if (count >= 2) {
+                    Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
                     return@OutlinedButton
                 }
                 val cell = editorState.findFirstOpenCell(3, 1)
@@ -510,11 +510,11 @@ internal fun OverlayEditorScreen(
 
             // + Brightness Slider
             OutlinedButton(onClick = {
-                val alreadyExists = editorState.tiles.any {
+                val count = editorState.tiles.count {
                     it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
                 }
-                if (alreadyExists) {
-                    Toast.makeText(context, "A brightness slider is already on the grid", Toast.LENGTH_SHORT).show()
+                if (count >= 2) {
+                    Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
                     return@OutlinedButton
                 }
                 val cell = editorState.findFirstOpenCell(3, 1)
