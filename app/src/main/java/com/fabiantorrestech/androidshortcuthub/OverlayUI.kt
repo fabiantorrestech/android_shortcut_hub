@@ -108,7 +108,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
@@ -531,6 +531,7 @@ internal fun OverlayContent(
 
     key(activeOrientation) {
     val context = LocalContext.current
+    val view = LocalView.current
     val appWidgetManager = remember(context) { AppWidgetManager.getInstance(context) }
     // ── State ────────────────────────────────────────────────────────────────
     val tiles = remember { mutableStateListOf<TileState>().apply { addAll(initialState.tiles) } }
@@ -1053,7 +1054,6 @@ internal fun OverlayContent(
 
     // ── UI ────────────────────────────────────────────────────────────────────
 
-    val hapticFeedback = LocalHapticFeedback.current
     fun openMainApp() {
         context.startActivity(
             android.content.Intent(context, MainActivity::class.java).apply {
@@ -1263,7 +1263,7 @@ internal fun OverlayContent(
                                     } else {
                                         {
                                             if (initialState.hapticFeedbackEnabled) {
-                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                view.performHapticForcefully(HapticFeedbackType.LongPress)
                                             }
                                             selectedTileId = tile.id
                                             sheetVisible = true
@@ -1283,7 +1283,7 @@ internal fun OverlayContent(
                                 } else {
                                     {
                                         if (initialState.hapticFeedbackEnabled) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            view.performHapticForcefully(HapticFeedbackType.LongPress)
                                         }
                                         selectedTileId = tile.id
                                         sheetVisible = true

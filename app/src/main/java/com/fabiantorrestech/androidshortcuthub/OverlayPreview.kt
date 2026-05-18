@@ -26,7 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,7 +76,7 @@ internal fun OverlayGridPreview(
     onSliderBoundsChanged: (Int, Rect) -> Unit = { _, _ -> },
     widgetContent: @Composable BoxScope.(WidgetTileState) -> Unit = {},
 ) {
-    val hapticFeedback = LocalHapticFeedback.current
+    val view = LocalView.current
 
     BoxWithConstraints(modifier = modifier) {
         val cellWidth = maxWidth / gridColumns
@@ -166,7 +166,7 @@ internal fun OverlayGridPreview(
                             .combinedClickable(
                                 onClick = {
                                     if (hapticFeedbackEnabled) {
-                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        view.performHapticForcefully(HapticFeedbackType.LongPress)
                                     }
                                     if (selectedTileId == null) {
                                         onTileTap(tile)
@@ -174,7 +174,7 @@ internal fun OverlayGridPreview(
                                 },
                                 onLongClick = {
                                     if (hapticFeedbackEnabled) {
-                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        view.performHapticForcefully(HapticFeedbackType.LongPress)
                                     }
                                     onTileLongPress(tile)
                                 },
@@ -252,7 +252,7 @@ internal fun OverlayGridPreview(
                                             isMoveMode = isMoveMode,
                                             onLongPress = {
                                                 if (hapticFeedbackEnabled) {
-                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    view.performHapticForcefully(HapticFeedbackType.LongPress)
                                                 }
                                                 onTileLongPress(tile)
                                             },

@@ -18,8 +18,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BrightnessHigh
+import androidx.compose.material.icons.rounded.BrightnessLow
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,25 +38,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private val RAIL_PADDING = 24.dp
-private val RAIL_WIDTH = 6.dp
+private val RAIL_WIDTH = 8.dp
 private val KNOB_RADIUS = 14.dp
 private val NOTCH_LENGTH = 10.dp
-private val BUTTON_SIZE = 28.dp
+private val BUTTON_HEIGHT = 40.dp
 private val SLIDER_OUTLINE_RADIUS = 18.dp
+
+private fun sliderIcon(sliderType: SliderType, isIncrement: Boolean): ImageVector = when (sliderType) {
+    SliderType.VOLUME     -> if (isIncrement) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeDown
+    SliderType.BRIGHTNESS -> if (isIncrement) Icons.Rounded.BrightnessHigh else Icons.Rounded.BrightnessLow
+}
 
 @Composable
 internal fun SystemSliderTile(
@@ -59,7 +73,7 @@ internal fun SystemSliderTile(
     modifier: Modifier = Modifier,
 ) {
     val state = rememberSystemSliderState(config)
-    val hapticFeedback = LocalHapticFeedback.current
+    val view = LocalView.current
 
     BoxWithConstraints(modifier = modifier) {
         val isHorizontal = maxWidth > maxHeight
@@ -114,7 +128,7 @@ internal fun SystemSliderTile(
                             else -> newRaw
                         }
                         if (config.showNotches && config.notchHapticsEnabled && snappedStep != lastHapticStep) {
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            view.performHapticForcefully(HapticFeedbackType.TextHandleMove)
                             lastHapticStep = snappedStep
                         }
                         if (config.notchMode != SliderNotchMode.LOCK_ONLY) {
@@ -134,19 +148,24 @@ internal fun SystemSliderTile(
                 val knobRadiusPx = KNOB_RADIUS.toPx()
                 val notchLenPx = NOTCH_LENGTH.toPx()
 
+                val trackCorner = CornerRadius(railWidthPx / 2f)
+                val knobShadowRadiusPx = knobRadiusPx + 3.dp.toPx()
+
                 if (isHorizontal) {
                     val startX = railPaddingPx
                     val endX = size.width - railPaddingPx
                     val fillEndX = startX + dragFraction * (endX - startX)
-                    drawRect(
-                        color = railColor.copy(alpha = 0.3f),
+                    drawRoundRect(
+                        color = railColor.copy(alpha = 0.25f),
                         topLeft = Offset(startX, cy - railWidthPx / 2f),
                         size = Size(endX - startX, railWidthPx),
+                        cornerRadius = trackCorner,
                     )
-                    drawRect(
-                        color = fillColor.copy(alpha = 0.7f),
+                    drawRoundRect(
+                        color = fillColor.copy(alpha = 0.85f),
                         topLeft = Offset(startX, cy - railWidthPx / 2f),
                         size = Size((fillEndX - startX).coerceAtLeast(0f), railWidthPx),
+                        cornerRadius = trackCorner,
                     )
                     if (config.showNotches) {
                         for (step in 0..totalSteps) {
@@ -160,20 +179,23 @@ internal fun SystemSliderTile(
                             )
                         }
                     }
+                    drawCircle(color = railColor.copy(alpha = 0.2f), radius = knobShadowRadiusPx, center = Offset(fillEndX, cy))
                     drawCircle(color = knobColor, radius = knobRadiusPx, center = Offset(fillEndX, cy))
                 } else {
                     val startY = size.height - railPaddingPx
                     val endY = railPaddingPx
                     val knobY = startY - dragFraction * (startY - endY)
-                    drawRect(
-                        color = railColor.copy(alpha = 0.3f),
+                    drawRoundRect(
+                        color = railColor.copy(alpha = 0.25f),
                         topLeft = Offset(cx - railWidthPx / 2f, endY),
                         size = Size(railWidthPx, startY - endY),
+                        cornerRadius = trackCorner,
                     )
-                    drawRect(
-                        color = fillColor.copy(alpha = 0.7f),
+                    drawRoundRect(
+                        color = fillColor.copy(alpha = 0.85f),
                         topLeft = Offset(cx - railWidthPx / 2f, knobY),
                         size = Size(railWidthPx, (startY - knobY).coerceAtLeast(0f)),
+                        cornerRadius = trackCorner,
                     )
                     if (config.showNotches) {
                         for (step in 0..totalSteps) {
@@ -187,6 +209,7 @@ internal fun SystemSliderTile(
                             )
                         }
                     }
+                    drawCircle(color = railColor.copy(alpha = 0.2f), radius = knobShadowRadiusPx, center = Offset(cx, knobY))
                     drawCircle(color = knobColor, radius = knobRadiusPx, center = Offset(cx, knobY))
                 }
             }
@@ -198,7 +221,7 @@ internal fun SystemSliderTile(
                     OutlinedButton(
                         onClick = {
                             if (config.buttonHapticsEnabled) {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                                view.performHapticForcefully(HapticFeedbackType.KeyboardTap)
                             }
                             state.cycleStream()
                         },
@@ -223,69 +246,88 @@ internal fun SystemSliderTile(
         } else {
             Modifier
         }
+        val containerModifier = Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(SLIDER_OUTLINE_RADIUS))
+            .then(outlineModifier)
 
         when (config.buttonPlacement) {
-            SliderButtonPlacement.NONE -> Box(modifier = Modifier.fillMaxSize().then(outlineModifier)) {
+            SliderButtonPlacement.NONE -> Box(modifier = containerModifier) {
                 SliderCanvas(Modifier.fillMaxSize())
             }
             SliderButtonPlacement.SPLIT -> {
                 if (isHorizontal) {
                     Row(
-                        modifier = Modifier.fillMaxSize().then(outlineModifier),
+                        modifier = containerModifier,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        HoldableButton(label = "-", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(-config.buttonStepSize)
-                        }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, false),
+                            modifier = Modifier.fillMaxHeight().width(BUTTON_HEIGHT),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(-config.buttonStepSize) }
                         SliderCanvas(Modifier.weight(1f).fillMaxHeight())
-                        HoldableButton(label = "+", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(config.buttonStepSize)
-                        }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, true),
+                            modifier = Modifier.fillMaxHeight().width(BUTTON_HEIGHT),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(config.buttonStepSize) }
                     }
                 } else {
                     Column(
-                        modifier = Modifier.fillMaxSize().then(outlineModifier),
+                        modifier = containerModifier,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        HoldableButton(label = "+", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(config.buttonStepSize)
-                        }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, true),
+                            modifier = Modifier.fillMaxWidth().height(BUTTON_HEIGHT),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(config.buttonStepSize) }
                         SliderCanvas(Modifier.fillMaxWidth().weight(1f))
-                        HoldableButton(label = "-", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(-config.buttonStepSize)
-                        }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, false),
+                            modifier = Modifier.fillMaxWidth().height(BUTTON_HEIGHT),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(-config.buttonStepSize) }
                     }
                 }
             }
             SliderButtonPlacement.TOP -> {
                 Column(
-                    modifier = Modifier.fillMaxSize().then(outlineModifier),
+                    modifier = containerModifier,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        HoldableButton(label = "+", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(config.buttonStepSize)
-                        }
-                        HoldableButton(label = "-", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(-config.buttonStepSize)
-                        }
+                    Row(modifier = Modifier.fillMaxWidth().height(BUTTON_HEIGHT)) {
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, true),
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(config.buttonStepSize) }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, false),
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(-config.buttonStepSize) }
                     }
                     SliderCanvas(Modifier.fillMaxWidth().weight(1f))
                 }
             }
             SliderButtonPlacement.BOTTOM -> {
                 Column(
-                    modifier = Modifier.fillMaxSize().then(outlineModifier),
+                    modifier = containerModifier,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     SliderCanvas(Modifier.fillMaxWidth().weight(1f))
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        HoldableButton(label = "-", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(-config.buttonStepSize)
-                        }
-                        HoldableButton(label = "+", hapticsEnabled = config.buttonHapticsEnabled) {
-                            state.step(config.buttonStepSize)
-                        }
+                    Row(modifier = Modifier.fillMaxWidth().height(BUTTON_HEIGHT)) {
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, false),
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(-config.buttonStepSize) }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, true),
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(config.buttonStepSize) }
                     }
                 }
             }
@@ -295,18 +337,18 @@ internal fun SystemSliderTile(
 
 @Composable
 private fun HoldableButton(
-    label: String,
+    icon: ImageVector,
     modifier: Modifier = Modifier,
     hapticsEnabled: Boolean = false,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressing by interactionSource.collectIsPressedAsState()
-    val hapticFeedback = LocalHapticFeedback.current
+    val view = LocalView.current
 
     fun clickWithOptionalHaptic() {
         if (hapticsEnabled) {
-            hapticFeedback.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+            view.performHapticForcefully(HapticFeedbackType.KeyboardTap)
         }
         onClick()
     }
@@ -321,12 +363,15 @@ private fun HoldableButton(
         }
     }
 
-    OutlinedButton(
+    Surface(
         onClick = ::clickWithOptionalHaptic,
-        modifier = modifier.size(BUTTON_SIZE),
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         interactionSource = interactionSource,
-        contentPadding = PaddingValues(0.dp),
     ) {
-        Text(text = label, fontSize = 14.sp, textAlign = TextAlign.Center)
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        }
     }
 }
