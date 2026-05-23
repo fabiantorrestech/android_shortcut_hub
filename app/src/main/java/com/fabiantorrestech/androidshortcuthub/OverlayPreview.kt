@@ -36,11 +36,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -120,6 +127,40 @@ internal fun OverlayGridPreview(
     var pickerOpenTileId by remember { mutableStateOf<Int?>(null) }
     var pendingStreamForTile by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var fanOutOpenTileId by remember { mutableStateOf<Int?>(null) }
+    var fanOutTileSnapshot by remember { mutableStateOf<SystemSliderTileState?>(null) }
+    var fanOutEnterVisible by remember { mutableStateOf(false) }
+    var fanOutExitRequested by remember { mutableStateOf(false) }
+    val fanOutIsEntering = fanOutEnterVisible && !fanOutExitRequested
+    val fanOutAlpha by animateFloatAsState(
+        targetValue = when { fanOutExitRequested -> 0f; fanOutEnterVisible -> 1f; else -> 0f },
+        animationSpec = tween(durationMillis = if (fanOutIsEntering) 120 else 280),
+        label = "fanOutAlpha",
+    )
+    val fanOutBlur by animateDpAsState(
+        targetValue = when { fanOutExitRequested -> 16.dp; fanOutEnterVisible -> 0.dp; else -> 16.dp },
+        animationSpec = tween(durationMillis = if (fanOutIsEntering) 120 else 280),
+        label = "fanOutBlur",
+    )
+    LaunchedEffect(fanOutOpenTileId) {
+        val id = fanOutOpenTileId
+        if (id != null) {
+            fanOutTileSnapshot = tiles.filterIsInstance<SystemSliderTileState>().firstOrNull { it.id == id }
+            fanOutExitRequested = false
+            fanOutEnterVisible = true
+        }
+    }
+    val dismissFanOut: () -> Unit = {
+        fanOutExitRequested = true
+        fanOutEnterVisible = false
+    }
+    LaunchedEffect(fanOutExitRequested) {
+        if (fanOutExitRequested) {
+            delay(300L)
+            fanOutOpenTileId = null
+            fanOutTileSnapshot = null
+            fanOutExitRequested = false
+        }
+    }
 
     BoxWithConstraints(modifier = modifier) {
         val cellWidth = maxWidth / gridColumns
@@ -372,7 +413,7 @@ internal fun OverlayGridPreview(
                 )
                 Card(
                     modifier = Modifier
-                        .offset(x = tileX + 4.dp, y = tileY + 36.dp)
+                        .offset(x = tileX + 4.dp, y = tileY + SLIDER_CHIP_HEIGHT + 4.dp)
                         .wrapContentWidth()
                         .wrapContentHeight(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
@@ -400,35 +441,35 @@ internal fun OverlayGridPreview(
         }
 
         // ── Inline FAN-OUT overlay ──────────────────────────────────────────────
-        if (fanOutOpenTileId != null) {
-            val fanTile = tiles.filterIsInstance<SystemSliderTileState>()
-                .firstOrNull { it.id == fanOutOpenTileId }
-            if (fanTile != null) {
-                val tileLeft = cellWidth * fanTile.column
-                val tileRight = tileLeft + cellWidth * fanTile.columnSpan
-                val tileTop = cellHeight * fanTile.row
-                val panelH = cellHeight * fanTile.rowSpan
-                val colWidth = 52.dp
-                val panelW = colWidth * pickerStreams.size + 32.dp
-                val panelX = when {
-                    tileLeft >= panelW -> tileLeft - panelW           // prefer LEFT
-                    maxWidth - tileRight >= panelW -> tileRight       // else RIGHT
-                    else -> (maxWidth - panelW).coerceAtLeast(0.dp)   // fallback CENTER
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { fanOutOpenTileId = null },
-                )
-                FanOutPanel(
-                    streams = pickerStreams,
-                    panelHeight = panelH,
-                    modifier = Modifier.offset(x = panelX, y = tileTop),
-                )
+        val fanTile = fanOutTileSnapshot
+        if (fanTile != null) {
+            val tileLeft = cellWidth * fanTile.column
+            val tileRight = tileLeft + cellWidth * fanTile.columnSpan
+            val tileTop = cellHeight * fanTile.row
+            val panelH = cellHeight * fanTile.rowSpan
+            val colWidth = 52.dp
+            val panelW = colWidth * pickerStreams.size + 32.dp
+            val panelX = when {
+                tileLeft >= panelW -> tileLeft - panelW           // prefer LEFT
+                maxWidth - tileRight >= panelW -> tileRight       // else RIGHT
+                else -> (maxWidth - panelW).coerceAtLeast(0.dp)   // fallback CENTER
             }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { dismissFanOut() },
+            )
+            FanOutPanel(
+                streams = pickerStreams,
+                panelHeight = panelH,
+                modifier = Modifier
+                    .offset(x = panelX, y = tileTop)
+                    .graphicsLayer { alpha = fanOutAlpha }
+                    .blur(fanOutBlur),
+            )
         }
     }
 }

@@ -34,7 +34,6 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.UnfoldMore
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -70,11 +69,13 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-internal val SLIDER_CHIP_HEIGHT = 36.dp
+internal val SLIDER_CHIP_HEIGHT = 24.dp
+private val CHIP_HEIGHT = SLIDER_CHIP_HEIGHT
 
 private val RAIL_PADDING = 24.dp
 private val RAIL_WIDTH = 8.dp
 private val KNOB_RADIUS = 14.dp
+private val KNOB_PILL_H = 4.dp
 private val NOTCH_LENGTH = 10.dp
 private val BUTTON_HEIGHT = 40.dp
 private val SLIDER_OUTLINE_RADIUS = 18.dp
@@ -109,6 +110,12 @@ internal fun SystemSliderTile(
 
     BoxWithConstraints(modifier = modifier) {
         val isHorizontal = maxWidth > maxHeight
+
+        val hasPickerChip = config.sliderType == SliderType.VOLUME &&
+            (config.streamMode == StreamMode.PICKER || config.streamMode == StreamMode.FAN_OUT)
+        val chipAtBottom = hasPickerChip && !isHorizontal &&
+            config.buttonPlacement == SliderButtonPlacement.TOP
+        val chipAtTop = hasPickerChip && !isHorizontal && !chipAtBottom
 
         val railColor = MaterialTheme.colorScheme.outline
         val fillColor = MaterialTheme.colorScheme.primary
@@ -147,10 +154,20 @@ internal fun SystemSliderTile(
                         onDragCancel = { isDragging = false },
                     ) { change, dragAmount ->
                         change.consume()
+                        val adjustedEndPx = if (chipAtTop) {
+                            (CHIP_HEIGHT.toPx() + KNOB_PILL_H.toPx() / 2f + 4.dp.toPx()).coerceAtLeast(RAIL_PADDING.toPx())
+                        } else {
+                            RAIL_PADDING.toPx()
+                        }
+                        val adjustedStartPx = if (chipAtBottom) {
+                            (size.height - CHIP_HEIGHT.toPx() - KNOB_PILL_H.toPx() / 2f - 4.dp.toPx()).coerceAtMost(size.height - RAIL_PADDING.toPx())
+                        } else {
+                            size.height - RAIL_PADDING.toPx()
+                        }
                         val railPx = if (isHorizontal) {
                             size.width - 2f * RAIL_PADDING.toPx()
                         } else {
-                            size.height - 2f * RAIL_PADDING.toPx()
+                            adjustedStartPx - adjustedEndPx
                         }
                         val delta = if (isHorizontal) dragAmount.x else -dragAmount.y
                         val newRaw = (dragFraction + delta / railPx).coerceIn(0f, 1f)
@@ -181,7 +198,8 @@ internal fun SystemSliderTile(
                 val notchLenPx = NOTCH_LENGTH.toPx()
 
                 val trackCorner = CornerRadius(railWidthPx / 2f)
-                val knobShadowRadiusPx = knobRadiusPx + 3.dp.toPx()
+                val knobPillH = KNOB_PILL_H.toPx()
+                val knobPillW = knobRadiusPx * 2f
 
                 if (isHorizontal) {
                     val startX = railPaddingPx
@@ -211,11 +229,23 @@ internal fun SystemSliderTile(
                             )
                         }
                     }
-                    drawCircle(color = railColor.copy(alpha = 0.2f), radius = knobShadowRadiusPx, center = Offset(fillEndX, cy))
-                    drawCircle(color = knobColor, radius = knobRadiusPx, center = Offset(fillEndX, cy))
+                    drawRoundRect(
+                        color = knobColor,
+                        topLeft = Offset(fillEndX - knobPillH / 2f, cy - knobPillW / 2f),
+                        size = Size(knobPillH, knobPillW),
+                        cornerRadius = CornerRadius(knobPillH / 2f),
+                    )
                 } else {
-                    val startY = size.height - railPaddingPx
-                    val endY = railPaddingPx
+                    val endY = if (chipAtTop) {
+                        (CHIP_HEIGHT.toPx() + knobPillH / 2f + 4.dp.toPx()).coerceAtLeast(railPaddingPx)
+                    } else {
+                        railPaddingPx
+                    }
+                    val startY = if (chipAtBottom) {
+                        (size.height - CHIP_HEIGHT.toPx() - knobPillH / 2f - 4.dp.toPx()).coerceAtMost(size.height - railPaddingPx)
+                    } else {
+                        size.height - railPaddingPx
+                    }
                     val knobY = startY - dragFraction * (startY - endY)
                     drawRoundRect(
                         color = railColor.copy(alpha = 0.25f),
@@ -241,47 +271,30 @@ internal fun SystemSliderTile(
                             )
                         }
                     }
-                    drawCircle(color = railColor.copy(alpha = 0.2f), radius = knobShadowRadiusPx, center = Offset(cx, knobY))
-                    drawCircle(color = knobColor, radius = knobRadiusPx, center = Offset(cx, knobY))
+                    drawRoundRect(
+                        color = knobColor,
+                        topLeft = Offset(cx - knobPillW / 2f, knobY - knobPillH / 2f),
+                        size = Size(knobPillW, knobPillH),
+                        cornerRadius = CornerRadius(knobPillH / 2f),
+                    )
                 }
             }
 
         @Composable
         fun SliderCanvas(sizeModifier: Modifier) {
             Box(modifier = sizeModifier.then(sliderModifier)) {
-                if (config.sliderType == SliderType.VOLUME) {
-                    when (config.streamMode) {
-                        StreamMode.PICKER -> {
-                            Box(modifier = Modifier.align(Alignment.TopCenter)) {
-                                AssistChip(
-                                    onClick = { onPickerOpen?.invoke(tileId) },
-                                    label = { Text(state.streamLabel(), fontSize = 9.sp, maxLines = 1) },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Rounded.UnfoldMore,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp),
-                                        )
-                                    },
-                                )
-                            }
-                        }
-                        StreamMode.FAN_OUT -> {
-                            Box(modifier = Modifier.align(Alignment.TopCenter)) {
-                                AssistChip(
-                                    onClick = { onFanOutOpen?.invoke(tileId) },
-                                    label = { Text("Channels", fontSize = 9.sp, maxLines = 1) },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Rounded.Tune,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp),
-                                        )
-                                    },
-                                )
-                            }
-                        }
-                        else -> Unit
+                if (hasPickerChip) {
+                    val chipAlignment = if (chipAtBottom) Alignment.BottomCenter else Alignment.TopCenter
+                    Box(modifier = Modifier.align(chipAlignment)) {
+                        StreamPickerChip(
+                            mode = config.streamMode,
+                            streamIcon = if (config.streamMode == StreamMode.FAN_OUT) Icons.Rounded.Tune
+                                         else state.activeStreamIcon(),
+                            onClick = {
+                                if (config.streamMode == StreamMode.PICKER) onPickerOpen?.invoke(tileId)
+                                else onFanOutOpen?.invoke(tileId)
+                            },
+                        )
                     }
                 }
             }
@@ -444,6 +457,38 @@ internal fun FanOutPanel(
                     )
                 }
             }
+        }
+    }
+}
+
+private fun SystemSliderState.activeStreamIcon(): ImageVector = when (activeStream) {
+    AudioManager.STREAM_RING         -> Icons.Rounded.Phone
+    AudioManager.STREAM_ALARM        -> Icons.Rounded.Alarm
+    AudioManager.STREAM_NOTIFICATION -> Icons.Rounded.Notifications
+    else                             -> Icons.AutoMirrored.Rounded.VolumeUp
+}
+
+@Composable
+private fun StreamPickerChip(
+    mode: StreamMode,
+    streamIcon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(CHIP_HEIGHT),
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Icon(streamIcon, contentDescription = null, modifier = Modifier.size(13.dp))
+            Icon(Icons.Rounded.UnfoldMore, contentDescription = null, modifier = Modifier.size(11.dp))
         }
     }
 }

@@ -456,6 +456,7 @@ internal fun OverlayEditorScreen(
                         editorState.gridColumns,
                         hasVolumeSlider,
                         hasBrightnessSlider,
+                        autoToggleOverlay = false,
                     ),
                 )
             }) { Text("+ Widget") }

@@ -1,6 +1,7 @@
 package com.fabiantorrestech.androidshortcuthub
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -76,6 +77,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
     private var widgetHostListening = false
+    private var pendingLockedLaunchIntent: Intent? = null
 
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -97,6 +99,17 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Fired when the device is unlocked. Launches any app the user tapped while locked.
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_USER_PRESENT) {
+                val pending = pendingLockedLaunchIntent ?: return
+                pendingLockedLaunchIntent = null
+                runCatching { startActivity(pending) }
+            }
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         isConnected = true
@@ -104,6 +117,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         registerReceiverCompat(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         registerReceiverCompat(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
+        registerReceiverCompat(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
         serviceScope.launch {
             toggleRequests.collect { toggleOverlay() }
         }
@@ -153,6 +167,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         if (isConnected) {
             runCatching { unregisterReceiver(screenOffReceiver) }
             runCatching { unregisterReceiver(systemUiDismissReceiver) }
+            runCatching { unregisterReceiver(userPresentReceiver) }
+            pendingLockedLaunchIntent = null
             isConnected = false
             instance = null
         }
@@ -419,25 +435,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             .sortedBy { it.label.lowercase() }
 
     private fun launchApp(app: LaunchableApp) {
-        val component = app.componentName
-        if (component != null) {
-            startActivity(
-                Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    this.component = component
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                },
-            )
-            return
-        }
-
-        val launchUri = app.launchIntentUri ?: return
-        startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
-                app.launchIntentPackage?.let { setPackage(it) }
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            },
-        )
+        val target = buildAppLaunchIntent(app) ?: return
+        startActivityWithKeyguard(target)
     }
 
     private fun launchIntent(tile: IntentTileState) {
@@ -451,10 +450,38 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
         runCatching {
             when (tile.intentType) {
-                IntentType.ACTIVITY -> startActivity(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                IntentType.ACTIVITY -> startActivityWithKeyguard(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                 IntentType.BROADCAST_RECEIVER -> sendBroadcast(intent)
                 IntentType.SERVICE -> startService(intent)
             }
+        }
+    }
+
+    private fun buildAppLaunchIntent(app: LaunchableApp): Intent? {
+        val component = app.componentName
+        if (component != null) {
+            return Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                this.component = component
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
+        val launchUri = app.launchIntentUri ?: return null
+        return Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
+            app.launchIntentPackage?.let { setPackage(it) }
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+    }
+
+    private fun startActivityWithKeyguard(intent: Intent) {
+        val km = getSystemService(KeyguardManager::class.java)
+        if (km.isKeyguardLocked) {
+            // Store the intent; userPresentReceiver fires it after the user unlocks.
+            // Dismiss the overlay immediately so the normal lock screen is visible.
+            pendingLockedLaunchIntent = intent
+            dismissOverlay()
+        } else {
+            runCatching { startActivity(intent) }
         }
     }
 

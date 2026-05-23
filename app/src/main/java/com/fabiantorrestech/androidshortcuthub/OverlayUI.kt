@@ -41,6 +41,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -1555,15 +1556,10 @@ internal fun OverlayContent(
             TileEditSheet(
                 tile = sheetTile,
                 tileLabelDraft = tileLabelDraft,
-                onLabelDraftChange = { tileLabelDraft = it },
-                onSaveLabel = {
+                onLabelDraftChange = { newLabel ->
+                    tileLabelDraft = newLabel
                     val index = tiles.indexOfFirst { it.id == sheetTile.id }
-                    if (index >= 0) { tiles[index] = tiles[index].copyWithLabel(tileLabelDraft.trim().ifBlank { null }); persist() }
-                },
-                onResetLabel = {
-                    tileLabelDraft = ""
-                    val index = tiles.indexOfFirst { it.id == sheetTile.id }
-                    if (index >= 0) { tiles[index] = tiles[index].copyWithLabel(null); persist() }
+                    if (index >= 0) { tiles[index] = tiles[index].copyWithLabel(newLabel.trim().ifBlank { null }); persist() }
                 },
                 onResizeWidth = { delta -> resizeSelected(0, delta) },
                 onResizeHeight = { delta -> resizeSelected(delta, 0) },
@@ -1882,8 +1878,6 @@ private fun TileEditSheet(
     tile: TileState,
     tileLabelDraft: String,
     onLabelDraftChange: (String) -> Unit,
-    onSaveLabel: () -> Unit,
-    onResetLabel: () -> Unit,
     onResizeWidth: (Int) -> Unit,
     onResizeHeight: (Int) -> Unit,
     onTextScaleUp: () -> Unit,
@@ -1955,18 +1949,16 @@ private fun TileEditSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
-                    // Rename
-                    OutlinedTextField(
-                        value = tileLabelDraft,
-                        onValueChange = onLabelDraftChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Rename Tile") },
-                        placeholder = { Text("Use default name") },
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = onSaveLabel) { Text("Save Name") }
-                        OutlinedButton(onClick = onResetLabel) { Text("Reset Name") }
+                    // Rename (not available for sliders)
+                    if (tile !is SystemSliderTileState) {
+                        OutlinedTextField(
+                            value = tileLabelDraft,
+                            onValueChange = onLabelDraftChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Rename Tile") },
+                            placeholder = { Text("Use default name") },
+                            singleLine = true,
+                        )
                     }
 
                     // Resize
@@ -2407,14 +2399,24 @@ internal fun SliderConfigControls(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (config.sliderType == SliderType.VOLUME) {
             Text("Stream", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 StreamMode.entries.forEach { mode ->
+                    val label = when (mode) {
+                        StreamMode.PICKER  -> "Picker"
+                        StreamMode.DEFAULT -> "Default"
+                        StreamMode.SINGLE  -> "Single"
+                        StreamMode.ACTIVE  -> "Active"
+                        StreamMode.FAN_OUT -> "Fan-Out"
+                    }
                     val selected = config.streamMode == mode
                     if (selected) {
-                        Button(onClick = {}) { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        Button(onClick = {}) { Text(label) }
                     } else {
                         OutlinedButton(onClick = { onConfigChange(config.copy(streamMode = mode)) }) {
-                            Text(mode.name.lowercase().replaceFirstChar { it.uppercase() })
+                            Text(label)
                         }
                     }
                 }

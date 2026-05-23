@@ -179,25 +179,8 @@ class LockscreenOverlayActivity : ComponentActivity() {
             .sortedBy { it.label.lowercase() }
 
     private fun launchApp(app: LaunchableApp) {
-        val component = app.componentName
-        if (component != null) {
-            startActivity(
-                Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    this.component = component
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                },
-            )
-            return
-        }
-
-        val launchUri = app.launchIntentUri ?: return
-        startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
-                app.launchIntentPackage?.let { setPackage(it) }
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            },
-        )
+        val target = buildAppLaunchIntent(app) ?: return
+        startActivityWithKeyguard(target)
     }
 
     private fun launchIntent(tile: IntentTileState) {
@@ -211,11 +194,33 @@ class LockscreenOverlayActivity : ComponentActivity() {
         }
         runCatching {
             when (tile.intentType) {
-                IntentType.ACTIVITY -> startActivity(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                IntentType.ACTIVITY -> startActivityWithKeyguard(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                 IntentType.BROADCAST_RECEIVER -> sendBroadcast(intent)
                 IntentType.SERVICE -> startService(intent)
             }
         }
+    }
+
+    private fun buildAppLaunchIntent(app: LaunchableApp): Intent? {
+        val component = app.componentName
+        if (component != null) {
+            return Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                this.component = component
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
+        val launchUri = app.launchIntentUri ?: return null
+        return Intent(Intent.ACTION_VIEW, Uri.parse(launchUri)).apply {
+            app.launchIntentPackage?.let { setPackage(it) }
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+    }
+
+    private fun startActivityWithKeyguard(intent: Intent) {
+        runCatching { startActivity(intent) }
+        // If locked, Android shows the keyguard before the target app; finish() via
+        // requestDismiss() in the tap handler clears this activity from the stack.
     }
 
     private fun resolveCustomPackage(packageName: String): LaunchableApp? {

@@ -113,24 +113,20 @@ internal fun OverlayTileInspector(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // ── Rename ───────────────────────────────────────────────────────────
-        var labelDraft by remember(tile.id, tile.customLabel) { mutableStateOf(tile.customLabel ?: "") }
-        OutlinedTextField(
-            value = labelDraft,
-            onValueChange = { labelDraft = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Custom label") },
-            placeholder = { Text("Use default name") },
-            singleLine = true,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = {
-                editorState.updateTile(tile.id) { it.copyWithLabel(labelDraft.trim().ifBlank { null }) }
-            }) { Text("Save name") }
-            OutlinedButton(onClick = {
-                labelDraft = ""
-                editorState.updateTile(tile.id) { it.copyWithLabel(null) }
-            }) { Text("Reset name") }
+        // ── Rename (not available for sliders) ──────────────────────────────
+        var labelDraft by remember(tile.id) { mutableStateOf(tile.customLabel ?: "") }
+        if (tile !is SystemSliderTileState) {
+            OutlinedTextField(
+                value = labelDraft,
+                onValueChange = {
+                    labelDraft = it
+                    editorState.updateTile(tile.id) { t -> t.copyWithLabel(it.trim().ifBlank { null }) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Custom label") },
+                placeholder = { Text("Use default name") },
+                singleLine = true,
+            )
         }
 
         // ── Move ─────────────────────────────────────────────────────────────

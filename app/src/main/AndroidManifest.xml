@@ -85,6 +85,15 @@
             android:theme="@style/Theme.ShortcutHub.Transparent" />
 
         <activity
+            android:name=".KeyguardUnlockTrampolineActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ShortcutHub.Transparent"
+            android:turnScreenOn="true" />
+
+        <activity
             android:name=".LockscreenOverlayActivity"
             android:excludeFromRecents="true"
             android:exported="false"
