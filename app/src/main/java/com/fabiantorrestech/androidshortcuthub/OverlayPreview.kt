@@ -1,21 +1,34 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.media.AudioManager
+import android.os.Build
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Accessibility
+import androidx.compose.material.icons.rounded.Alarm
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,14 +37,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +101,25 @@ internal fun OverlayGridPreview(
     widgetContent: @Composable BoxScope.(WidgetTileState) -> Unit = {},
 ) {
     val view = LocalView.current
+
+    // Picker / fan-out rendered at grid level to avoid TYPE_ACCESSIBILITY_OVERLAY popup z-order issues
+    val context = LocalContext.current
+    val a11yEnabled = remember {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
+    }
+    val pickerStreams = remember(a11yEnabled) {
+        buildList {
+            add(AudioManager.STREAM_MUSIC        to (Icons.AutoMirrored.Rounded.VolumeUp to "Media"))
+            add(AudioManager.STREAM_RING         to (Icons.Rounded.Phone                 to "Ring"))
+            add(AudioManager.STREAM_ALARM        to (Icons.Rounded.Alarm                 to "Alarm"))
+            add(AudioManager.STREAM_NOTIFICATION to (Icons.Rounded.Notifications         to "Notif"))
+            if (a11yEnabled) add(AudioManager.STREAM_ACCESSIBILITY to (Icons.Rounded.Accessibility to "TalkBack"))
+        }
+    }
+    var pickerOpenTileId by remember { mutableStateOf<Int?>(null) }
+    var pendingStreamForTile by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var fanOutOpenTileId by remember { mutableStateOf<Int?>(null) }
 
     BoxWithConstraints(modifier = modifier) {
         val cellWidth = maxWidth / gridColumns
@@ -254,6 +291,7 @@ internal fun OverlayGridPreview(
 
                                     is SystemSliderTileState -> {
                                         SystemSliderTile(
+                                            tileId = tile.id,
                                             config = tile.config,
                                             isMoveMode = isMoveMode,
                                             onLongPress = {
@@ -262,6 +300,10 @@ internal fun OverlayGridPreview(
                                                 }
                                                 onTileLongPress(tile)
                                             },
+                                            onPickerOpen = { id -> pickerOpenTileId = id },
+                                            onFanOutOpen = { id -> fanOutOpenTileId = id },
+                                            pendingStreamForTile = pendingStreamForTile,
+                                            onStreamConsumed = { pendingStreamForTile = null },
                                             modifier = Modifier.fillMaxSize(),
                                         )
                                         if (isMoveMode) {
@@ -309,6 +351,83 @@ internal fun OverlayGridPreview(
                         }
                     }
                 }
+            }
+        }
+
+        // ── Inline PICKER overlay ───────────────────────────────────────────────
+        // Rendered last (on top of all tiles). Avoids TYPE_APPLICATION_PANEL popup z-order issue.
+        if (pickerOpenTileId != null) {
+            val pickerTile = tiles.filterIsInstance<SystemSliderTileState>()
+                .firstOrNull { it.id == pickerOpenTileId }
+            if (pickerTile != null) {
+                val tileX = cellWidth * pickerTile.column
+                val tileY = cellHeight * pickerTile.row
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { pickerOpenTileId = null },
+                )
+                Card(
+                    modifier = Modifier
+                        .offset(x = tileX + 4.dp, y = tileY + 36.dp)
+                        .wrapContentWidth()
+                        .wrapContentHeight(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        pickerStreams.forEach { (stream, pair) ->
+                            val (icon, label) = pair
+                            Row(
+                                modifier = Modifier
+                                    .clickable {
+                                        pendingStreamForTile = pickerOpenTileId!! to stream
+                                        pickerOpenTileId = null
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Icon(icon, contentDescription = null)
+                                Text(label, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Inline FAN-OUT overlay ──────────────────────────────────────────────
+        if (fanOutOpenTileId != null) {
+            val fanTile = tiles.filterIsInstance<SystemSliderTileState>()
+                .firstOrNull { it.id == fanOutOpenTileId }
+            if (fanTile != null) {
+                val tileLeft = cellWidth * fanTile.column
+                val tileRight = tileLeft + cellWidth * fanTile.columnSpan
+                val tileTop = cellHeight * fanTile.row
+                val panelH = cellHeight * fanTile.rowSpan
+                val colWidth = 52.dp
+                val panelW = colWidth * pickerStreams.size + 32.dp
+                val panelX = when {
+                    tileLeft >= panelW -> tileLeft - panelW           // prefer LEFT
+                    maxWidth - tileRight >= panelW -> tileRight       // else RIGHT
+                    else -> (maxWidth - panelW).coerceAtLeast(0.dp)   // fallback CENTER
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { fanOutOpenTileId = null },
+                )
+                FanOutPanel(
+                    streams = pickerStreams,
+                    panelHeight = panelH,
+                    modifier = Modifier.offset(x = panelX, y = tileTop),
+                )
             }
         }
     }

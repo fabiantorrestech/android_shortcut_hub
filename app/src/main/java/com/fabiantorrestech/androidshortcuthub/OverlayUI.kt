@@ -283,7 +283,7 @@ internal fun TileState.copyWithSpan(rowSpan: Int, columnSpan: Int): TileState = 
 }
 
 internal enum class SliderType { VOLUME, BRIGHTNESS }
-internal enum class StreamMode { PICKER, DEFAULT, SINGLE, ACTIVE }
+internal enum class StreamMode { PICKER, DEFAULT, SINGLE, ACTIVE, FAN_OUT }
 internal enum class AudioStreamType { MUSIC, RING, ALARM, NOTIFICATION }
 internal enum class SliderButtonPlacement { TOP, BOTTOM, SPLIT, NONE }
 internal enum class SliderNotchMode { LOCK_ONLY, LOCK_AND_SLIDE, SLIDE_ONLY }

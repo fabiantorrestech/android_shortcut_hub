@@ -167,7 +167,7 @@ internal class SystemSliderState(
 
     private fun resolveDefaultStream(): Int = when (config.streamMode) {
         StreamMode.SINGLE, StreamMode.DEFAULT -> config.singleStream.toAudioManagerStream()
-        StreamMode.PICKER -> config.singleStream.toAudioManagerStream()
+        StreamMode.PICKER, StreamMode.FAN_OUT -> config.singleStream.toAudioManagerStream()
         StreamMode.ACTIVE -> AudioManager.STREAM_MUSIC
     }
 }

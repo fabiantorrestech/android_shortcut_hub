@@ -1,5 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.content.Context
 import android.media.AudioManager
 import android.os.Build
 import android.view.accessibility.AccessibilityManager
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,12 +32,14 @@ import androidx.compose.material.icons.rounded.BrightnessHigh
 import androidx.compose.material.icons.rounded.BrightnessLow
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.UnfoldMore
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,15 +58,19 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+internal val SLIDER_CHIP_HEIGHT = 36.dp
 
 private val RAIL_PADDING = 24.dp
 private val RAIL_WIDTH = 8.dp
@@ -81,9 +90,22 @@ internal fun SystemSliderTile(
     isMoveMode: Boolean,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
+    tileId: Int = -1,
+    onPickerOpen: ((Int) -> Unit)? = null,
+    onFanOutOpen: ((Int) -> Unit)? = null,
+    pendingStreamForTile: Pair<Int, Int>? = null,
+    onStreamConsumed: (() -> Unit)? = null,
 ) {
     val state = rememberSystemSliderState(config)
     val view = LocalView.current
+
+    LaunchedEffect(pendingStreamForTile) {
+        val pending = pendingStreamForTile ?: return@LaunchedEffect
+        if (pending.first == tileId) {
+            state.selectStream(pending.second)
+            onStreamConsumed?.invoke()
+        }
+    }
 
     BoxWithConstraints(modifier = modifier) {
         val isHorizontal = maxWidth > maxHeight
@@ -227,55 +249,39 @@ internal fun SystemSliderTile(
         @Composable
         fun SliderCanvas(sizeModifier: Modifier) {
             Box(modifier = sizeModifier.then(sliderModifier)) {
-                if (config.sliderType == SliderType.VOLUME && config.streamMode == StreamMode.PICKER) {
-                    val context = LocalContext.current
-                    val a11yEnabled = remember {
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                            context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
-                    }
-                    val streams = remember(a11yEnabled) {
-                        buildList {
-                            add(AudioManager.STREAM_MUSIC        to (Icons.AutoMirrored.Rounded.VolumeUp to "Media"))
-                            add(AudioManager.STREAM_RING         to (Icons.Rounded.Phone                 to "Ring"))
-                            add(AudioManager.STREAM_ALARM        to (Icons.Rounded.Alarm                 to "Alarm"))
-                            add(AudioManager.STREAM_NOTIFICATION to (Icons.Rounded.Notifications         to "Notif"))
-                            if (a11yEnabled) {
-                                add(AudioManager.STREAM_ACCESSIBILITY to (Icons.Rounded.Accessibility    to "TalkBack"))
-                            }
-                        }
-                    }
-                    var dropdownExpanded by remember { mutableStateOf(false) }
-                    Box(modifier = Modifier.align(Alignment.TopCenter)) {
-                        AssistChip(
-                            onClick = { dropdownExpanded = true },
-                            label = { Text(state.streamLabel(), fontSize = 9.sp, maxLines = 1) },
-                            trailingIcon = {
-                                Icon(
-                                    Icons.Rounded.UnfoldMore,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            },
-                        )
-                        DropdownMenu(
-                            expanded = dropdownExpanded,
-                            onDismissRequest = { dropdownExpanded = false },
-                        ) {
-                            streams.forEach { (stream, pair) ->
-                                val (icon, label) = pair
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    leadingIcon = { Icon(icon, contentDescription = null) },
-                                    onClick = {
-                                        if (config.buttonHapticsEnabled) {
-                                            view.performHapticForcefully(HapticFeedbackType.KeyboardTap)
-                                        }
-                                        state.selectStream(stream)
-                                        dropdownExpanded = false
+                if (config.sliderType == SliderType.VOLUME) {
+                    when (config.streamMode) {
+                        StreamMode.PICKER -> {
+                            Box(modifier = Modifier.align(Alignment.TopCenter)) {
+                                AssistChip(
+                                    onClick = { onPickerOpen?.invoke(tileId) },
+                                    label = { Text(state.streamLabel(), fontSize = 9.sp, maxLines = 1) },
+                                    trailingIcon = {
+                                        Icon(
+                                            Icons.Rounded.UnfoldMore,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
                                     },
                                 )
                             }
                         }
+                        StreamMode.FAN_OUT -> {
+                            Box(modifier = Modifier.align(Alignment.TopCenter)) {
+                                AssistChip(
+                                    onClick = { onFanOutOpen?.invoke(tileId) },
+                                    label = { Text("Channels", fontSize = 9.sp, maxLines = 1) },
+                                    trailingIcon = {
+                                        Icon(
+                                            Icons.Rounded.Tune,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        else -> Unit
                     }
                 }
             }
@@ -342,15 +348,15 @@ internal fun SystemSliderTile(
                 ) {
                     Row(modifier = Modifier.fillMaxWidth().height(BUTTON_HEIGHT)) {
                         HoldableButton(
-                            icon = sliderIcon(config.sliderType, true),
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            hapticsEnabled = config.buttonHapticsEnabled,
-                        ) { state.step(config.buttonStepSize) }
-                        HoldableButton(
                             icon = sliderIcon(config.sliderType, false),
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             hapticsEnabled = config.buttonHapticsEnabled,
                         ) { state.step(-config.buttonStepSize) }
+                        HoldableButton(
+                            icon = sliderIcon(config.sliderType, true),
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            hapticsEnabled = config.buttonHapticsEnabled,
+                        ) { state.step(config.buttonStepSize) }
                     }
                     SliderCanvas(Modifier.fillMaxWidth().weight(1f))
                 }
@@ -373,6 +379,69 @@ internal fun SystemSliderTile(
                             hapticsEnabled = config.buttonHapticsEnabled,
                         ) { state.step(config.buttonStepSize) }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun FanOutPanel(
+    streams: List<Pair<Int, Pair<ImageVector, String>>>,
+    panelHeight: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val colWidth = 52.dp
+    val iconAndLabelHeight = 44.dp
+    val sliderLength = (panelHeight - iconAndLabelHeight - 16.dp).coerceAtLeast(40.dp)
+
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.height(panelHeight).padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            streams.forEach { (stream, pair) ->
+                val (icon, label) = pair
+                val maxVol = remember(stream) { audioManager.getStreamMaxVolume(stream).coerceAtLeast(1) }
+                var vol by remember(stream) { mutableIntStateOf(audioManager.getStreamVolume(stream)) }
+
+                Column(
+                    modifier = Modifier.width(colWidth).fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Slider(
+                            value = vol.toFloat() / maxVol,
+                            onValueChange = { newVal ->
+                                val newVol = (newVal * maxVol).roundToInt().coerceIn(0, maxVol)
+                                audioManager.setStreamVolume(stream, newVol, 0)
+                                vol = newVol
+                            },
+                            modifier = Modifier
+                                .requiredWidth(sliderLength)
+                                .graphicsLayer { rotationZ = -90f },
+                        )
+                    }
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = label,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
                 }
             }
         }
