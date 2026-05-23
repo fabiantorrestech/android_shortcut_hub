@@ -129,6 +129,11 @@ internal class SystemSliderState(
         refresh()
     }
 
+    fun selectStream(stream: Int) {
+        activeStream = stream
+        refresh()
+    }
+
     private fun refresh() {
         when (config.sliderType) {
             SliderType.VOLUME -> {

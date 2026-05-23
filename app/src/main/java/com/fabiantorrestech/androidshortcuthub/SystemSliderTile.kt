@@ -1,5 +1,8 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.media.AudioManager
+import android.os.Build
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -9,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,13 +21,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.BrightnessHigh
-import androidx.compose.material.icons.rounded.BrightnessLow
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Accessibility
+import androidx.compose.material.icons.rounded.Alarm
+import androidx.compose.material.icons.rounded.BrightnessHigh
+import androidx.compose.material.icons.rounded.BrightnessLow
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +56,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -218,20 +228,54 @@ internal fun SystemSliderTile(
         fun SliderCanvas(sizeModifier: Modifier) {
             Box(modifier = sizeModifier.then(sliderModifier)) {
                 if (config.sliderType == SliderType.VOLUME && config.streamMode == StreamMode.PICKER) {
-                    OutlinedButton(
-                        onClick = {
-                            if (config.buttonHapticsEnabled) {
-                                view.performHapticForcefully(HapticFeedbackType.KeyboardTap)
+                    val context = LocalContext.current
+                    val a11yEnabled = remember {
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
+                    }
+                    val streams = remember(a11yEnabled) {
+                        buildList {
+                            add(AudioManager.STREAM_MUSIC        to (Icons.AutoMirrored.Rounded.VolumeUp to "Media"))
+                            add(AudioManager.STREAM_RING         to (Icons.Rounded.Phone                 to "Ring"))
+                            add(AudioManager.STREAM_ALARM        to (Icons.Rounded.Alarm                 to "Alarm"))
+                            add(AudioManager.STREAM_NOTIFICATION to (Icons.Rounded.Notifications         to "Notif"))
+                            if (a11yEnabled) {
+                                add(AudioManager.STREAM_ACCESSIBILITY to (Icons.Rounded.Accessibility    to "TalkBack"))
                             }
-                            state.cycleStream()
-                        },
-                        modifier = Modifier
-                            .align(if (isHorizontal) Alignment.TopCenter else Alignment.CenterStart)
-                            .height(22.dp)
-                            .width(52.dp),
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Text(text = state.streamLabel(), fontSize = 9.sp, maxLines = 1)
+                        }
+                    }
+                    var dropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.align(Alignment.TopCenter)) {
+                        AssistChip(
+                            onClick = { dropdownExpanded = true },
+                            label = { Text(state.streamLabel(), fontSize = 9.sp, maxLines = 1) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Rounded.UnfoldMore,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            },
+                        )
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false },
+                        ) {
+                            streams.forEach { (stream, pair) ->
+                                val (icon, label) = pair
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = { Icon(icon, contentDescription = null) },
+                                    onClick = {
+                                        if (config.buttonHapticsEnabled) {
+                                            view.performHapticForcefully(HapticFeedbackType.KeyboardTap)
+                                        }
+                                        state.selectStream(stream)
+                                        dropdownExpanded = false
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }

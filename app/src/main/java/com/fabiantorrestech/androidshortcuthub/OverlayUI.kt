@@ -12,6 +12,7 @@ import android.content.ComponentName
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WorkOutline
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 // CardDefaults is now used in OverlayPreview.kt; keeping import avoids compilation warnings in overlapping usages
@@ -1297,13 +1299,41 @@ internal fun OverlayContent(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Text(
-                        text = tile.displayLabel,
-                        modifier = Modifier.align(Alignment.Center).padding(8.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = defaultTextColor,
-                        fontWeight = if (tile.id == selectedTileId) FontWeight.SemiBold else FontWeight.Normal,
-                    )
+                    val providerShortName = tile.providerComponent.substringAfterLast(".")
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(8.dp)
+                            .background(
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
+                                RoundedCornerShape(8.dp),
+                            )
+                            .border(
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                                RoundedCornerShape(8.dp),
+                            )
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "Unavailable",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = providerShortName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            maxLines = 1,
+                        )
+                    }
                 }
             },
         )
