@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -274,6 +275,21 @@ internal fun OverlayEditorScreen(
         )
     }
 
+    val configuration = LocalConfiguration.current
+    val shortSide = minOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
+    val longSide = maxOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
+    val deviceAspectRatio = if (activeTab == OverlayOrientation.LANDSCAPE)
+        longSide / shortSide
+    else
+        shortSide / longSide
+    val defaultFontWeight = if (editorState.savedState.defaultBoldText) FontWeight.Bold else FontWeight.Normal
+    val defaultTextColor = resolveDefaultTileTextColor(
+        mode = editorState.savedState.defaultTextColorMode,
+        hex = editorState.savedState.defaultTextColorHex,
+        fallback = MaterialTheme.colorScheme.onSurface,
+    )
+    val isLandscapeEditor = configuration.screenWidthDp > configuration.screenHeightDp
+
     Column(modifier = Modifier.fillMaxSize()) {
 
         // ── Top bar: back arrow | unsaved label | popup buttons ─────────────
@@ -332,265 +348,491 @@ internal fun OverlayEditorScreen(
             }
         }
 
-        // ── Portrait / Landscape tab toggle ─────────────────────────────────
-        TabRow(selectedTabIndex = if (activeTab == OverlayOrientation.PORTRAIT) 0 else 1) {
-            Tab(
-                selected = activeTab == OverlayOrientation.PORTRAIT,
-                onClick = {
-                    syncGlobalsFromActive()
-                    activeTab = OverlayOrientation.PORTRAIT
-                },
-                text = { Text("Portrait") },
-            )
-            Tab(
-                selected = activeTab == OverlayOrientation.LANDSCAPE,
-                onClick = {
-                    syncGlobalsFromActive()
-                    activeTab = OverlayOrientation.LANDSCAPE
-                },
-                text = { Text("Landscape") },
-            )
-        }
-
-        if (activeTab == OverlayOrientation.LANDSCAPE && editorState.tiles.isEmpty()) {
-            Text(
-                text = "Landscape layout is empty — add tiles to configure it.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
-
-        // ── Grid preview (device aspect ratio, centred) ──────────────────────
-        val configuration = LocalConfiguration.current
-        val shortSide = minOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
-        val longSide = maxOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
-        val deviceAspectRatio = if (activeTab == OverlayOrientation.LANDSCAPE)
-            longSide / shortSide
-        else
-            shortSide / longSide
-        val defaultFontWeight = if (editorState.savedState.defaultBoldText) FontWeight.Bold else FontWeight.Normal
-        val defaultTextColor = resolveDefaultTileTextColor(
-            mode = editorState.savedState.defaultTextColorMode,
-            hex = editorState.savedState.defaultTextColorHex,
-            fallback = MaterialTheme.colorScheme.onSurface,
-        )
-
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1.4f),
-            contentAlignment = Alignment.Center,
-        ) {
-            val previewWidth = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight * deviceAspectRatio else maxWidth
-            val previewHeight = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight else maxWidth / deviceAspectRatio
-
-            Box(
-                modifier = Modifier
-                    .size(previewWidth, previewHeight)
-                    .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
-            ) {
-                OverlayGridPreview(
-                    tiles = editorState.tiles.toList(),
-                    gridRows = editorState.gridRows,
-                    gridColumns = editorState.gridColumns,
-                    showGrid = true,
-                    mode = OverlayRenderMode.EditorPreview,
-                    selectedTileId = editorState.selectedTileId,
-                    isMoveMode = false,
-                    defaultTextScale = editorState.savedState.defaultTextScale,
-                    defaultFontWeight = defaultFontWeight,
-                    defaultFontFamily = null,
-                    defaultTextColor = defaultTextColor,
-                    hapticFeedbackEnabled = editorState.savedState.hapticFeedbackEnabled,
-                    preloadedFonts = emptyMap(),
+        if (isLandscapeEditor) {
+            // ── Landscape: preview left | controls right ─────────────────────
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                BoxWithConstraints(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val previewWidth = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight * deviceAspectRatio else maxWidth
+                    val previewHeight = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight else maxWidth / deviceAspectRatio
+
+                    Box(
+                        modifier = Modifier
+                            .size(previewWidth, previewHeight)
+                            .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
+                    ) {
+                        OverlayGridPreview(
+                            tiles = editorState.tiles.toList(),
+                            gridRows = editorState.gridRows,
+                            gridColumns = editorState.gridColumns,
+                            showGrid = true,
+                            mode = OverlayRenderMode.EditorPreview,
+                            selectedTileId = editorState.selectedTileId,
+                            isMoveMode = false,
+                            defaultTextScale = editorState.savedState.defaultTextScale,
+                            defaultFontWeight = defaultFontWeight,
+                            defaultFontFamily = null,
+                            defaultTextColor = defaultTextColor,
+                            hapticFeedbackEnabled = editorState.savedState.hapticFeedbackEnabled,
+                            preloadedFonts = emptyMap(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                            onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
+                        )
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    TabRow(selectedTabIndex = if (activeTab == OverlayOrientation.PORTRAIT) 0 else 1) {
+                        Tab(
+                            selected = activeTab == OverlayOrientation.PORTRAIT,
+                            onClick = {
+                                syncGlobalsFromActive()
+                                activeTab = OverlayOrientation.PORTRAIT
+                            },
+                            text = { Text("Portrait") },
+                        )
+                        Tab(
+                            selected = activeTab == OverlayOrientation.LANDSCAPE,
+                            onClick = {
+                                syncGlobalsFromActive()
+                                activeTab = OverlayOrientation.LANDSCAPE
+                            },
+                            text = { Text("Landscape") },
+                        )
+                    }
+
+                    if (activeTab == OverlayOrientation.LANDSCAPE && editorState.tiles.isEmpty()) {
+                        Text(
+                            text = "Landscape layout is empty — add tiles to configure it.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(onClick = {
+                            val cell = editorState.findFirstOpenCell(1, 1)
+                            if (cell == null) {
+                                Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                AppTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    app = LaunchableApp(label = "App", componentName = null),
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                            Toast.makeText(context, "Tap the tile then 'Change app' in the inspector", Toast.LENGTH_SHORT).show()
+                        }) { Text("+ App") }
+
+                        OutlinedButton(onClick = {
+                            val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
+                            val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
+                            WidgetBindingCoordinator.startBinding()
+                            context.startActivity(
+                                BindWidgetActivity.createIntent(
+                                    context,
+                                    editorState.gridRows,
+                                    editorState.gridColumns,
+                                    hasVolumeSlider,
+                                    hasBrightnessSlider,
+                                    autoToggleOverlay = false,
+                                ),
+                            )
+                        }) { Text("+ Widget") }
+
+                        OutlinedButton(onClick = {
+                            val cell = editorState.findFirstOpenCell(1, 1)
+                            if (cell == null) {
+                                Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                IntentTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    intentAction = "android.intent.action.MAIN",
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                            Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
+                        }) { Text("+ Intent") }
+
+                        OutlinedButton(onClick = {
+                            val count = editorState.tiles.count {
+                                it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
+                            }
+                            if (count >= 2) {
+                                Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val cell = editorState.findFirstOpenCell(3, 1)
+                            if (cell == null) {
+                                Toast.makeText(context, "No space on grid for volume slider", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                SystemSliderTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    rowSpan = 3,
+                                    columnSpan = 1,
+                                    config = SystemSliderConfig(sliderType = SliderType.VOLUME),
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                        }) { Text("+ Vol Slider") }
+
+                        OutlinedButton(onClick = {
+                            val count = editorState.tiles.count {
+                                it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
+                            }
+                            if (count >= 2) {
+                                Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val cell = editorState.findFirstOpenCell(3, 1)
+                            if (cell == null) {
+                                Toast.makeText(context, "No space on grid for brightness slider", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                SystemSliderTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    rowSpan = 3,
+                                    columnSpan = 1,
+                                    config = SystemSliderConfig(sliderType = SliderType.BRIGHTNESS),
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                        }) { Text("+ Bright Slider") }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        OverlayTileInspector(
+                            editorState = editorState,
+                            onConfigureWidget = { appWidgetId ->
+                                if (activity != null) {
+                                    ShortcutHubWidgetHost.getInstance(context)
+                                        .startAppWidgetConfigureActivityForResult(
+                                            activity,
+                                            appWidgetId,
+                                            0,
+                                            CONFIGURE_WIDGET_REQUEST_CODE,
+                                            null,
+                                        )
+                                }
+                            },
+                            loadLaunchableApps = {
+                                editorState.savedState.tiles.filterIsInstance<AppTileState>().map { it.app }
+                            },
+                            openFontPicker = openFontPicker,
+                            openIconPicker = openIconPicker,
+                            fontEvents = fontEvents,
+                            iconEvents = iconEvents,
+                        )
+                    }
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = {
+                                    syncGlobalsFromActive()
+                                    onSave(portraitEditorState.commit(), landscapeEditorState.commit())
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Save") }
+                            OutlinedButton(
+                                onClick = {
+                                    portraitEditorState.reset()
+                                    landscapeEditorState.reset()
+                                    onDiscard()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Discard") }
+                        }
+                    }
+                }
+            }
+        } else {
+            // ── Portrait layout ──────────────────────────────────────────────
+            TabRow(selectedTabIndex = if (activeTab == OverlayOrientation.PORTRAIT) 0 else 1) {
+                Tab(
+                    selected = activeTab == OverlayOrientation.PORTRAIT,
+                    onClick = {
+                        syncGlobalsFromActive()
+                        activeTab = OverlayOrientation.PORTRAIT
+                    },
+                    text = { Text("Portrait") },
+                )
+                Tab(
+                    selected = activeTab == OverlayOrientation.LANDSCAPE,
+                    onClick = {
+                        syncGlobalsFromActive()
+                        activeTab = OverlayOrientation.LANDSCAPE
+                    },
+                    text = { Text("Landscape") },
                 )
             }
-        }
 
-        // ── Action bar ───────────────────────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // + App
-            OutlinedButton(onClick = {
-                val cell = editorState.findFirstOpenCell(1, 1)
-                if (cell == null) {
-                    Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
-                }
-                // Placeholder app tile — user selects the app in the inspector
-                val newId = editorState.nextTileId++
-                editorState.addTile(
-                    AppTileState(
-                        id = newId,
-                        row = cell.first,
-                        column = cell.second,
-                        app = LaunchableApp(label = "App", componentName = null),
-                    ),
+            if (activeTab == OverlayOrientation.LANDSCAPE && editorState.tiles.isEmpty()) {
+                Text(
+                    text = "Landscape layout is empty — add tiles to configure it.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
                 )
-                editorState.selectedTileId = newId
-                Toast.makeText(context, "Tap the tile then 'Change app' in the inspector", Toast.LENGTH_SHORT).show()
-            }) { Text("+ App") }
+            }
 
-            // + Widget
-            OutlinedButton(onClick = {
-                val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
-                val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
-                WidgetBindingCoordinator.startBinding()
-                context.startActivity(
-                    BindWidgetActivity.createIntent(
-                        context,
-                        editorState.gridRows,
-                        editorState.gridColumns,
-                        hasVolumeSlider,
-                        hasBrightnessSlider,
-                        autoToggleOverlay = false,
-                    ),
-                )
-            }) { Text("+ Widget") }
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1.4f),
+                contentAlignment = Alignment.Center,
+            ) {
+                val previewWidth = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight * deviceAspectRatio else maxWidth
+                val previewHeight = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight else maxWidth / deviceAspectRatio
 
-            // + Intent
-            OutlinedButton(onClick = {
-                val cell = editorState.findFirstOpenCell(1, 1)
-                if (cell == null) {
-                    Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
+                Box(
+                    modifier = Modifier
+                        .size(previewWidth, previewHeight)
+                        .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
+                ) {
+                    OverlayGridPreview(
+                        tiles = editorState.tiles.toList(),
+                        gridRows = editorState.gridRows,
+                        gridColumns = editorState.gridColumns,
+                        showGrid = true,
+                        mode = OverlayRenderMode.EditorPreview,
+                        selectedTileId = editorState.selectedTileId,
+                        isMoveMode = false,
+                        defaultTextScale = editorState.savedState.defaultTextScale,
+                        defaultFontWeight = defaultFontWeight,
+                        defaultFontFamily = null,
+                        defaultTextColor = defaultTextColor,
+                        hapticFeedbackEnabled = editorState.savedState.hapticFeedbackEnabled,
+                        preloadedFonts = emptyMap(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
+                    )
                 }
-                val newId = editorState.nextTileId++
-                editorState.addTile(
-                    IntentTileState(
-                        id = newId,
-                        row = cell.first,
-                        column = cell.second,
-                        intentAction = "android.intent.action.MAIN",
-                    ),
-                )
-                editorState.selectedTileId = newId
-                Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
-            }) { Text("+ Intent") }
+            }
 
-            // + Volume Slider
-            OutlinedButton(onClick = {
-                val count = editorState.tiles.count {
-                    it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
-                }
-                if (count >= 2) {
-                    Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
-                }
-                val cell = editorState.findFirstOpenCell(3, 1)
-                if (cell == null) {
-                    Toast.makeText(context, "No space on grid for volume slider", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
-                }
-                val newId = editorState.nextTileId++
-                editorState.addTile(
-                    SystemSliderTileState(
-                        id = newId,
-                        row = cell.first,
-                        column = cell.second,
-                        rowSpan = 3,
-                        columnSpan = 1,
-                        config = SystemSliderConfig(sliderType = SliderType.VOLUME),
-                    ),
-                )
-                editorState.selectedTileId = newId
-            }) { Text("+ Vol Slider") }
-
-            // + Brightness Slider
-            OutlinedButton(onClick = {
-                val count = editorState.tiles.count {
-                    it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
-                }
-                if (count >= 2) {
-                    Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
-                }
-                val cell = editorState.findFirstOpenCell(3, 1)
-                if (cell == null) {
-                    Toast.makeText(context, "No space on grid for brightness slider", Toast.LENGTH_SHORT).show()
-                    return@OutlinedButton
-                }
-                val newId = editorState.nextTileId++
-                editorState.addTile(
-                    SystemSliderTileState(
-                        id = newId,
-                        row = cell.first,
-                        column = cell.second,
-                        rowSpan = 3,
-                        columnSpan = 1,
-                        config = SystemSliderConfig(sliderType = SliderType.BRIGHTNESS),
-                    ),
-                )
-                editorState.selectedTileId = newId
-            }) { Text("+ Bright Slider") }
-        }
-
-        // ── Inspector ────────────────────────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            OverlayTileInspector(
-                editorState = editorState,
-                onConfigureWidget = { appWidgetId ->
-                    if (activity != null) {
-                        ShortcutHubWidgetHost.getInstance(context)
-                            .startAppWidgetConfigureActivityForResult(
-                                activity,
-                                appWidgetId,
-                                0,
-                                CONFIGURE_WIDGET_REQUEST_CODE,
-                                null,
-                            )
-                    }
-                },
-                loadLaunchableApps = {
-                    editorState.savedState.tiles.filterIsInstance<AppTileState>().map { it.app }
-                },
-                openFontPicker = openFontPicker,
-                openIconPicker = openIconPicker,
-                fontEvents = fontEvents,
-                iconEvents = iconEvents,
-            )
-        }
-
-        // ── Save / Discard bar ───────────────────────────────────────────────
-        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(
-                    onClick = {
-                        syncGlobalsFromActive()
-                        onSave(portraitEditorState.commit(), landscapeEditorState.commit())
+                // + App
+                OutlinedButton(onClick = {
+                    val cell = editorState.findFirstOpenCell(1, 1)
+                    if (cell == null) {
+                        Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    // Placeholder app tile — user selects the app in the inspector
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        AppTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            app = LaunchableApp(label = "App", componentName = null),
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                    Toast.makeText(context, "Tap the tile then 'Change app' in the inspector", Toast.LENGTH_SHORT).show()
+                }) { Text("+ App") }
+
+                // + Widget
+                OutlinedButton(onClick = {
+                    val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
+                    val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
+                    WidgetBindingCoordinator.startBinding()
+                    context.startActivity(
+                        BindWidgetActivity.createIntent(
+                            context,
+                            editorState.gridRows,
+                            editorState.gridColumns,
+                            hasVolumeSlider,
+                            hasBrightnessSlider,
+                            autoToggleOverlay = false,
+                        ),
+                    )
+                }) { Text("+ Widget") }
+
+                // + Intent
+                OutlinedButton(onClick = {
+                    val cell = editorState.findFirstOpenCell(1, 1)
+                    if (cell == null) {
+                        Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        IntentTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            intentAction = "android.intent.action.MAIN",
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                    Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
+                }) { Text("+ Intent") }
+
+                // + Volume Slider
+                OutlinedButton(onClick = {
+                    val count = editorState.tiles.count {
+                        it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
+                    }
+                    if (count >= 2) {
+                        Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val cell = editorState.findFirstOpenCell(3, 1)
+                    if (cell == null) {
+                        Toast.makeText(context, "No space on grid for volume slider", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        SystemSliderTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            rowSpan = 3,
+                            columnSpan = 1,
+                            config = SystemSliderConfig(sliderType = SliderType.VOLUME),
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                }) { Text("+ Vol Slider") }
+
+                // + Brightness Slider
+                OutlinedButton(onClick = {
+                    val count = editorState.tiles.count {
+                        it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
+                    }
+                    if (count >= 2) {
+                        Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val cell = editorState.findFirstOpenCell(3, 1)
+                    if (cell == null) {
+                        Toast.makeText(context, "No space on grid for brightness slider", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        SystemSliderTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            rowSpan = 3,
+                            columnSpan = 1,
+                            config = SystemSliderConfig(sliderType = SliderType.BRIGHTNESS),
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                }) { Text("+ Bright Slider") }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                OverlayTileInspector(
+                    editorState = editorState,
+                    onConfigureWidget = { appWidgetId ->
+                        if (activity != null) {
+                            ShortcutHubWidgetHost.getInstance(context)
+                                .startAppWidgetConfigureActivityForResult(
+                                    activity,
+                                    appWidgetId,
+                                    0,
+                                    CONFIGURE_WIDGET_REQUEST_CODE,
+                                    null,
+                                )
+                        }
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Save") }
-                OutlinedButton(
-                    onClick = {
-                        portraitEditorState.reset()
-                        landscapeEditorState.reset()
-                        onDiscard()
+                    loadLaunchableApps = {
+                        editorState.savedState.tiles.filterIsInstance<AppTileState>().map { it.app }
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Discard") }
+                    openFontPicker = openFontPicker,
+                    openIconPicker = openIconPicker,
+                    fontEvents = fontEvents,
+                    iconEvents = iconEvents,
+                )
+            }
+
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            syncGlobalsFromActive()
+                            onSave(portraitEditorState.commit(), landscapeEditorState.commit())
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Save") }
+                    OutlinedButton(
+                        onClick = {
+                            portraitEditorState.reset()
+                            landscapeEditorState.reset()
+                            onDiscard()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Discard") }
+                }
             }
         }
     }
