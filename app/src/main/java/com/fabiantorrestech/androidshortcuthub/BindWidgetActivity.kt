@@ -75,6 +75,7 @@ class BindWidgetActivity : ComponentActivity() {
         private const val EXTRA_GRID_COLUMNS = "grid_columns"
         private const val EXTRA_HAS_VOLUME_SLIDER = "has_volume_slider"
         private const val EXTRA_HAS_BRIGHTNESS_SLIDER = "has_brightness_slider"
+        private const val EXTRA_AUTO_TOGGLE_OVERLAY = "auto_toggle_overlay"
 
         private val tileInsertionResults = MutableSharedFlow<TileInsertionEvent>(extraBufferCapacity = 1)
 
@@ -84,6 +85,7 @@ class BindWidgetActivity : ComponentActivity() {
             gridColumns: Int = 4,
             hasVolumeSlider: Boolean = false,
             hasBrightnessSlider: Boolean = false,
+            autoToggleOverlay: Boolean = true,
         ): Intent {
             return Intent(context, BindWidgetActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -91,6 +93,7 @@ class BindWidgetActivity : ComponentActivity() {
                 putExtra(EXTRA_GRID_COLUMNS, gridColumns)
                 putExtra(EXTRA_HAS_VOLUME_SLIDER, hasVolumeSlider)
                 putExtra(EXTRA_HAS_BRIGHTNESS_SLIDER, hasBrightnessSlider)
+                putExtra(EXTRA_AUTO_TOGGLE_OVERLAY, autoToggleOverlay)
             }
         }
 
@@ -102,6 +105,7 @@ class BindWidgetActivity : ComponentActivity() {
 
     private var pendingAppWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
     private var hasCompletedFlow = false
+    private val autoToggleOverlay by lazy { intent.getBooleanExtra(EXTRA_AUTO_TOGGLE_OVERLAY, true) }
 
     private val bindWidgetLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -204,7 +208,7 @@ class BindWidgetActivity : ComponentActivity() {
         tileInsertionResults.tryEmit(event)
         hasCompletedFlow = true
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
-        routeShortcutHubToggle(this)
+        if (autoToggleOverlay) routeShortcutHubToggle(this)
         finish()
     }
 
@@ -214,7 +218,7 @@ class BindWidgetActivity : ComponentActivity() {
         tileInsertionResults.tryEmit(event)
         hasCompletedFlow = true
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
-        routeShortcutHubToggle(this)
+        if (autoToggleOverlay) routeShortcutHubToggle(this)
         finish()
     }
 

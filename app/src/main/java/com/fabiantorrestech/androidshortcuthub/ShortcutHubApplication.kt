@@ -76,15 +76,38 @@ class ShortcutHubApplication : Application() {
 
         return runCatching {
             val root = JSONObject(raw)
-            val tilesArray = root.optJSONArray("tiles") ?: return@runCatching emptySet()
-            buildSet {
-                for (index in 0 until tilesArray.length()) {
-                    val item = tilesArray.optJSONObject(index) ?: continue
-                    if (item.optString("type") == "widget" && item.has("appWidgetId")) {
-                        add(item.getInt("appWidgetId"))
+            val isV2 = root.optInt("version") >= 2
+            val widgetIds = mutableSetOf<Int>()
+
+            fun addIfWidget(item: JSONObject) {
+                if (item.optString("type") == "widget" && item.has("appWidgetId")) {
+                    widgetIds.add(item.getInt("appWidgetId"))
+                }
+            }
+
+            fun extractFrom(layoutObj: JSONObject?) {
+                val arr = layoutObj?.optJSONArray("tiles") ?: return
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    addIfWidget(item)
+                    // Widgets nested in a widget stack must also count as "in use"; otherwise the
+                    // orphan cleanup deletes their appWidgetIds and they render as "Unavailable".
+                    if (item.optString("type") == "widget_stack") {
+                        val nested = item.optJSONArray("widgets") ?: continue
+                        for (j in 0 until nested.length()) {
+                            nested.optJSONObject(j)?.let(::addIfWidget)
+                        }
                     }
                 }
             }
+
+            if (isV2) {
+                extractFrom(root.optJSONObject("portrait"))
+                if (!root.isNull("landscape")) extractFrom(root.optJSONObject("landscape"))
+            } else {
+                extractFrom(root)
+            }
+            widgetIds
         }.getOrDefault(emptySet())
     }
 

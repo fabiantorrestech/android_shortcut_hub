@@ -261,13 +261,15 @@ class ShortcutHubOverlayService : Service() {
                     gravity = Gravity.TOP or Gravity.START
                 }
 
+                windowManager.addView(composeView, params)
                 overlayView = composeView
                 overlayParams = params
-                windowManager.addView(composeView, params)
                 warmFontsAsync(portraitState, landscapeState)
                 initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
                 syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
+            } catch (e: Exception) {
+                Log.e(TAG, "showOverlay failed", e)
             } finally {
                 isShowingOverlay = false
             }
@@ -285,7 +287,7 @@ class ShortcutHubOverlayService : Service() {
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
-        if (widgetHostListening || state.tiles.none { it is WidgetTileState }) return
+        if (widgetHostListening || !state.tiles.hasAnyWidget()) return
         ShortcutHubWidgetHost.getInstance(this).startListening(this)
         widgetHostListening = true
     }

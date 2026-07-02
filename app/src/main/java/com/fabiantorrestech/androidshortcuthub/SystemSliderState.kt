@@ -31,8 +31,10 @@ internal class SystemSliderState(
         private set
 
     private var observers: List<ContentObserver> = emptyList()
+    private var refCount = 0
 
     fun start() {
+        if (++refCount > 1) { refresh(); return }
         refresh()
         val handler = Handler(Looper.getMainLooper())
         val newObservers = mutableListOf<ContentObserver>()
@@ -79,8 +81,23 @@ internal class SystemSliderState(
     }
 
     fun stop() {
+        if (--refCount > 0) return
         observers.forEach { contentResolver.unregisterContentObserver(it) }
         observers = emptyList()
+    }
+
+    companion object {
+        private val instances =
+            HashMap<Triple<SliderType, StreamMode, AudioStreamType>, SystemSliderState>()
+
+        internal fun acquire(context: Context, config: SystemSliderConfig): SystemSliderState {
+            val key = Triple(config.sliderType, config.streamMode, config.singleStream)
+            return synchronized(instances) {
+                instances.getOrPut(key) {
+                    SystemSliderState(context.applicationContext, config)
+                }
+            }
+        }
     }
 
     fun setStream(stream: Int) {
@@ -129,6 +146,11 @@ internal class SystemSliderState(
         refresh()
     }
 
+    fun selectStream(stream: Int) {
+        activeStream = stream
+        refresh()
+    }
+
     private fun refresh() {
         when (config.sliderType) {
             SliderType.VOLUME -> {
@@ -162,7 +184,7 @@ internal class SystemSliderState(
 
     private fun resolveDefaultStream(): Int = when (config.streamMode) {
         StreamMode.SINGLE, StreamMode.DEFAULT -> config.singleStream.toAudioManagerStream()
-        StreamMode.PICKER -> config.singleStream.toAudioManagerStream()
+        StreamMode.PICKER, StreamMode.FAN_OUT -> config.singleStream.toAudioManagerStream()
         StreamMode.ACTIVE -> AudioManager.STREAM_MUSIC
     }
 }
@@ -177,9 +199,8 @@ internal fun AudioStreamType.toAudioManagerStream(): Int = when (this) {
 @Composable
 internal fun rememberSystemSliderState(config: SystemSliderConfig): SystemSliderState {
     val context = LocalContext.current
-    val state = remember(config.sliderType, config.streamMode, config.singleStream) {
-        SystemSliderState(context, config)
-    }
+    val key = Triple(config.sliderType, config.streamMode, config.singleStream)
+    val state = remember(key) { SystemSliderState.acquire(context, config) }
     DisposableEffect(state) {
         state.start()
         onDispose { state.stop() }

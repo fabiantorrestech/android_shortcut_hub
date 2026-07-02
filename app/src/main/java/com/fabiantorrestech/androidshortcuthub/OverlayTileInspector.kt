@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +58,8 @@ internal fun OverlayTileInspector(
     fontEvents: Flow<TileFontSelection>,
     iconEvents: Flow<TileIconSelection>,
     modifier: Modifier = Modifier,
+    onEditScrollBox: (tileId: Int) -> Unit = {},
+    onEditWidgetStack: (tileId: Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val selectedId = editorState.selectedTileId
@@ -105,6 +108,8 @@ internal fun OverlayTileInspector(
             is IntentTileState -> "Intent — ${tile.displayLabel}"
             is WidgetTileState -> "Widget — ${tile.displayLabel}"
             is SystemSliderTileState -> "${tile.config.sliderType.name.lowercase().replaceFirstChar { it.uppercase() }} Slider"
+            is ScrollBoxTileState -> "Scrollbox — ${tile.displayLabel}"
+            is WidgetStackTileState -> "Widget Stack — ${tile.displayLabel}"
         }
         Text(typeLabel, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Text(
@@ -113,24 +118,20 @@ internal fun OverlayTileInspector(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // ── Rename ───────────────────────────────────────────────────────────
-        var labelDraft by remember(tile.id, tile.customLabel) { mutableStateOf(tile.customLabel ?: "") }
-        OutlinedTextField(
-            value = labelDraft,
-            onValueChange = { labelDraft = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Custom label") },
-            placeholder = { Text("Use default name") },
-            singleLine = true,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = {
-                editorState.updateTile(tile.id) { it.copyWithLabel(labelDraft.trim().ifBlank { null }) }
-            }) { Text("Save name") }
-            OutlinedButton(onClick = {
-                labelDraft = ""
-                editorState.updateTile(tile.id) { it.copyWithLabel(null) }
-            }) { Text("Reset name") }
+        // ── Rename (not available for sliders) ──────────────────────────────
+        var labelDraft by remember(tile.id) { mutableStateOf(tile.customLabel ?: "") }
+        if (tile !is SystemSliderTileState) {
+            OutlinedTextField(
+                value = labelDraft,
+                onValueChange = {
+                    labelDraft = it
+                    editorState.updateTile(tile.id) { t -> t.copyWithLabel(it.trim().ifBlank { null }) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Custom label") },
+                placeholder = { Text("Use default name") },
+                singleLine = true,
+            )
         }
 
         // ── Move ─────────────────────────────────────────────────────────────
@@ -152,7 +153,7 @@ internal fun OverlayTileInspector(
         }
 
         // ── Text scale + Bold (AppTile + IntentTile only) ────────────────────
-        if (tile !is WidgetTileState && tile !is SystemSliderTileState) {
+        if (tile !is WidgetTileState && tile !is SystemSliderTileState && tile !is ScrollBoxTileState && tile !is WidgetStackTileState) {
             val scaleLabel = tile.customTextScale?.let { "${"%.1f".format(it)}×" } ?: "default"
             Text(
                 "Text Scale ($scaleLabel)",
@@ -230,6 +231,82 @@ internal fun OverlayTileInspector(
                     },
                 )
             }
+            is ScrollBoxTileState -> {
+                OutlinedButton(
+                    onClick = { onEditScrollBox(tile.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Edit contents  ›") }
+
+                Text("Scroll direction", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val vertical = tile.scrollDirection == ScrollDirection.VERTICAL
+                    ScrollBoxSelectButton("↕ Vertical", vertical) {
+                        editorState.updateTile(tile.id) { t ->
+                            val sb = t as ScrollBoxTileState
+                            sb.copy(
+                                scrollDirection = ScrollDirection.VERTICAL,
+                                scrollbarEdge = if (sb.scrollbarEdge == ScrollbarEdge.TOP || sb.scrollbarEdge == ScrollbarEdge.BOTTOM) ScrollbarEdge.RIGHT else sb.scrollbarEdge,
+                            )
+                        }
+                    }
+                    ScrollBoxSelectButton("↔ Horizontal", !vertical) {
+                        editorState.updateTile(tile.id) { t ->
+                            val sb = t as ScrollBoxTileState
+                            sb.copy(
+                                scrollDirection = ScrollDirection.HORIZONTAL,
+                                scrollbarEdge = if (sb.scrollbarEdge == ScrollbarEdge.LEFT || sb.scrollbarEdge == ScrollbarEdge.RIGHT) ScrollbarEdge.BOTTOM else sb.scrollbarEdge,
+                            )
+                        }
+                    }
+                }
+
+                Text("Scrollbar edge", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val edges = if (tile.scrollDirection == ScrollDirection.VERTICAL) {
+                        listOf("Left" to ScrollbarEdge.LEFT, "Right" to ScrollbarEdge.RIGHT)
+                    } else {
+                        listOf("Top" to ScrollbarEdge.TOP, "Bottom" to ScrollbarEdge.BOTTOM)
+                    }
+                    edges.forEach { (label, edge) ->
+                        ScrollBoxSelectButton(label, tile.scrollbarEdge == edge) {
+                            editorState.updateTile(tile.id) { t -> (t as ScrollBoxTileState).copy(scrollbarEdge = edge) }
+                        }
+                    }
+                }
+            }
+            is WidgetStackTileState -> {
+                OutlinedButton(
+                    onClick = { onEditWidgetStack(tile.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Edit stack  ›") }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Show page dots", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = tile.showPageIndicator,
+                        onCheckedChange = { checked ->
+                            editorState.updateTile(tile.id) { t -> (t as WidgetStackTileState).copy(showPageIndicator = checked) }
+                        },
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Auto-rotate", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = tile.autoRotate,
+                        onCheckedChange = { checked ->
+                            editorState.updateTile(tile.id) { t -> (t as WidgetStackTileState).copy(autoRotate = checked) }
+                        },
+                    )
+                }
+            }
         }
 
         // ── Delete ────────────────────────────────────────────────────────────
@@ -241,6 +318,21 @@ internal fun OverlayTileInspector(
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
             ),
         ) { Text("Delete tile") }
+    }
+}
+
+/** Toggle-style OutlinedButton used by the scrollbox inspector for direction / edge selection. */
+@Composable
+private fun ScrollBoxSelectButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        colors = if (selected) {
+            ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else {
+            ButtonDefaults.outlinedButtonColors()
+        },
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -339,6 +431,20 @@ private fun IntentTileInspectorControls(
         onClick = { openFontPicker(tile.id) },
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Font: ${tile.customFontName ?: "Default"}") }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Require unlock to launch", style = MaterialTheme.typography.bodyMedium)
+        Switch(
+            checked = tile.unlockToLaunch,
+            onCheckedChange = { enabled ->
+                editorState.updateTile(tile.id) { (it as IntentTileState).copy(unlockToLaunch = enabled) }
+            },
+        )
+    }
 
     OutlinedButton(
         onClick = { showForm = true },

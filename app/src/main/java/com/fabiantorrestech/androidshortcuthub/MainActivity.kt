@@ -1,7 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.NotificationManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
@@ -98,7 +97,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var hasOverlayPermission by remember { mutableStateOf(ShortcutHubOverlayService.canDrawOverlays(context)) }
     var isAccessibilityServiceEnabled by remember { mutableStateOf(isShortcutHubAccessibilityServiceEnabled(context)) }
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(isIgnoringBatteryOptimizationRestrictions(context)) }
-    var areNotificationsEnabled by remember { mutableStateOf(areAppNotificationsEnabled(context)) }
     var hasWriteSettingsPermission by remember { mutableStateOf(android.provider.Settings.System.canWrite(context)) }
     var config by remember { mutableStateOf(ShortcutHubSettings.load(context)) }
     var grayscaleConfig by remember { mutableStateOf(GrayscaleRepository.load(context)) }
@@ -218,7 +216,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 hasOverlayPermission = ShortcutHubOverlayService.canDrawOverlays(context)
                 isAccessibilityServiceEnabled = isShortcutHubAccessibilityServiceEnabled(context)
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizationRestrictions(context)
-                areNotificationsEnabled = areAppNotificationsEnabled(context)
                 hasWriteSettingsPermission = android.provider.Settings.System.canWrite(context)
                 config = ShortcutHubSettings.load(context)
             }
@@ -307,7 +304,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 hasOverlayPermission = hasOverlayPermission,
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
-                areNotificationsEnabled = areNotificationsEnabled,
                 hasWriteSettingsPermission = hasWriteSettingsPermission,
                 config = config,
                 intentDetails = intentDetails,
@@ -337,13 +333,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 onGrantBattery = {
                     context.startActivity(
                         Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-                    )
-                },
-                onGrantNotifications = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                        }
                     )
                 },
                 onGrantWriteSettings = {
@@ -422,7 +411,6 @@ private fun SetupTab(
     hasOverlayPermission: Boolean,
     isAccessibilityServiceEnabled: Boolean,
     isIgnoringBatteryOptimizations: Boolean,
-    areNotificationsEnabled: Boolean,
     hasWriteSettingsPermission: Boolean,
     config: ShortcutHubConfig,
     intentDetails: List<String>,
@@ -432,7 +420,6 @@ private fun SetupTab(
     onGrantOverlay: () -> Unit,
     onGrantAccessibility: () -> Unit,
     onGrantBattery: () -> Unit,
-    onGrantNotifications: () -> Unit,
     onGrantWriteSettings: () -> Unit,
 ) {
     val shouldShowAccessibilityBanner = !isAccessibilityServiceEnabled && !config.dismissAccessibilityBanner
@@ -476,14 +463,6 @@ private fun SetupTab(
                     actionLabel = "Open Settings",
                     onActionClick = onGrantBattery,
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    PermissionRow(
-                        title = "Notifications",
-                        granted = areNotificationsEnabled,
-                        actionLabel = "Open Settings",
-                        onActionClick = onGrantNotifications,
-                    )
-                }
                 PermissionRow(
                     title = "Modify system settings",
                     granted = hasWriteSettingsPermission,
@@ -1045,11 +1024,6 @@ private fun isIgnoringBatteryOptimizationRestrictions(context: Context): Boolean
     return pm.isIgnoringBatteryOptimizations(context.packageName)
 }
 
-private fun areAppNotificationsEnabled(context: Context): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-    val nm = context.getSystemService(NotificationManager::class.java) ?: return false
-    return nm.areNotificationsEnabled()
-}
 
 private fun resolveDisplayName(contentResolver: ContentResolver, uri: Uri): String? =
     runCatching {
