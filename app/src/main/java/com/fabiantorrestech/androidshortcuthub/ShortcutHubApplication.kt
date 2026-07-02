@@ -79,12 +79,24 @@ class ShortcutHubApplication : Application() {
             val isV2 = root.optInt("version") >= 2
             val widgetIds = mutableSetOf<Int>()
 
+            fun addIfWidget(item: JSONObject) {
+                if (item.optString("type") == "widget" && item.has("appWidgetId")) {
+                    widgetIds.add(item.getInt("appWidgetId"))
+                }
+            }
+
             fun extractFrom(layoutObj: JSONObject?) {
                 val arr = layoutObj?.optJSONArray("tiles") ?: return
                 for (i in 0 until arr.length()) {
                     val item = arr.optJSONObject(i) ?: continue
-                    if (item.optString("type") == "widget" && item.has("appWidgetId")) {
-                        widgetIds.add(item.getInt("appWidgetId"))
+                    addIfWidget(item)
+                    // Widgets nested in a widget stack must also count as "in use"; otherwise the
+                    // orphan cleanup deletes their appWidgetIds and they render as "Unavailable".
+                    if (item.optString("type") == "widget_stack") {
+                        val nested = item.optJSONArray("widgets") ?: continue
+                        for (j in 0 until nested.length()) {
+                            nested.optJSONObject(j)?.let(::addIfWidget)
+                        }
                     }
                 }
             }

@@ -1,7 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
 import android.accessibilityservice.AccessibilityService
-import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -77,7 +76,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
     private var widgetHostListening = false
-    private var pendingLockedLaunchIntent: Intent? = null
 
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -99,17 +97,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
     }
 
-    // Fired when the device is unlocked. Launches any app the user tapped while locked.
-    private val userPresentReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_USER_PRESENT) {
-                val pending = pendingLockedLaunchIntent ?: return
-                pendingLockedLaunchIntent = null
-                runCatching { startActivity(pending) }
-            }
-        }
-    }
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         isConnected = true
@@ -117,7 +104,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         registerReceiverCompat(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         registerReceiverCompat(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
-        registerReceiverCompat(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
         serviceScope.launch {
             toggleRequests.collect { toggleOverlay() }
         }
@@ -167,8 +153,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         if (isConnected) {
             runCatching { unregisterReceiver(screenOffReceiver) }
             runCatching { unregisterReceiver(systemUiDismissReceiver) }
-            runCatching { unregisterReceiver(userPresentReceiver) }
-            pendingLockedLaunchIntent = null
             isConnected = false
             instance = null
         }
@@ -361,7 +345,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
-        if (widgetHostListening || state.tiles.none { it is WidgetTileState }) return
+        if (widgetHostListening || !state.tiles.hasAnyWidget()) return
         ShortcutHubWidgetHost.getInstance(this).startListening(this)
         widgetHostListening = true
     }
@@ -436,7 +420,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
 
     private fun launchApp(app: LaunchableApp) {
         val target = buildAppLaunchIntent(app) ?: return
-        startActivityWithKeyguard(target)
+        // Opening an app inherently needs the device unlocked → always go through unlock.
+        launchViaUnlock(KeyguardUnlockTrampolineActivity.createIntent(this, target))
     }
 
     private fun launchIntent(tile: IntentTileState) {
@@ -448,12 +433,31 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             tile.intentDataUri?.let { data = Uri.parse(it) }
             tile.intentExtras.forEach { (k, v) -> putExtra(k, v) }
         }
-        runCatching {
-            when (tile.intentType) {
-                IntentType.ACTIVITY -> startActivityWithKeyguard(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-                IntentType.BROADCAST_RECEIVER -> sendBroadcast(intent)
-                IntentType.SERVICE -> startService(intent)
+        // The trampoline exists only to dismiss a locked keyguard (this service is not an
+        // Activity, so it cannot call requestDismissKeyguard itself). When the device is
+        // already unlocked it serves no purpose, and its opaque black frame visibly dismisses
+        // the app underneath before the (translucent) target appears. Only hop through it when
+        // the keyguard is actually locked; otherwise dispatch directly.
+        val keyguardLocked =
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (tile.unlockToLaunch && keyguardLocked) {
+            val trampoline = when (tile.intentType) {
+                IntentType.ACTIVITY ->
+                    KeyguardUnlockTrampolineActivity.createIntent(this, intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                IntentType.BROADCAST_RECEIVER ->
+                    KeyguardUnlockTrampolineActivity.createBroadcastIntent(this, intent)
+                IntentType.SERVICE ->
+                    KeyguardUnlockTrampolineActivity.createServiceIntent(this, intent)
             }
+            launchViaUnlock(trampoline)
+        } else {
+            runCatching {
+                when (tile.intentType) {
+                    IntentType.ACTIVITY -> startActivity(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                    IntentType.BROADCAST_RECEIVER -> sendBroadcast(intent)
+                    IntentType.SERVICE -> startService(intent)
+                }
+            }.onFailure { Log.e(TAG, "launchIntent dispatch failed", it) }
         }
     }
 
@@ -473,16 +477,18 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startActivityWithKeyguard(intent: Intent) {
-        val km = getSystemService(KeyguardManager::class.java)
-        if (km.isKeyguardLocked) {
-            // Store the intent; userPresentReceiver fires it after the user unlocks.
-            // Dismiss the overlay immediately so the normal lock screen is visible.
-            pendingLockedLaunchIntent = intent
-            dismissOverlay()
-        } else {
-            runCatching { startActivity(intent) }
-        }
+    /**
+     * Dismisses the overlay and starts [trampolineIntent] (a KeyguardUnlockTrampolineActivity
+     * intent). The trampoline is an Activity, so it can call requestDismissKeyguard to show the
+     * PIN/biometric prompt and then dispatch the real launch from a foreground activity context.
+     * This service is NOT an Activity, and deferring the launch to a background broadcast
+     * (the old userPresentReceiver approach) is blocked by Background-Activity-Launch
+     * restrictions on Android 10+, so the launch silently never happened.
+     */
+    private fun launchViaUnlock(trampolineIntent: Intent) {
+        dismissOverlay()
+        runCatching { startActivity(trampolineIntent) }
+            .onFailure { Log.e(TAG, "Failed to start unlock trampoline", it) }
     }
 
     private fun resolveCustomPackage(packageName: String): LaunchableApp? {

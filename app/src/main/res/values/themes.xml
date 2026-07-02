@@ -3,4 +3,15 @@
 
     <style name="Theme.ShortcutHub" parent="android:Theme.Material.Light.NoActionBar" />
     <style name="Theme.ShortcutHub.Transparent" parent="android:Theme.Translucent.NoTitleBar" />
+
+    <!--
+        Trampoline theme. Must be OPAQUE (not translucent): a translucent activity does not
+        occlude the keyguard, so the system cancels requestDismissKeyguard instantly and the
+        PIN/biometric bouncer never shows. Opaque black + no window animation makes it just a
+        brief dark frame before the unlock prompt appears.
+    -->
+    <style name="Theme.ShortcutHub.UnlockTrampoline" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

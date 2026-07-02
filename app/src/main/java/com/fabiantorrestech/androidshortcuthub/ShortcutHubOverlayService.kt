@@ -287,7 +287,7 @@ class ShortcutHubOverlayService : Service() {
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
-        if (widgetHostListening || state.tiles.none { it is WidgetTileState }) return
+        if (widgetHostListening || !state.tiles.hasAnyWidget()) return
         ShortcutHubWidgetHost.getInstance(this).startListening(this)
         widgetHostListening = true
     }

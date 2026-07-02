@@ -80,6 +80,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -142,6 +143,8 @@ internal const val TILE_TYPE_APP = "app"
 internal const val TILE_TYPE_INTENT = "intent"
 internal const val TILE_TYPE_WIDGET = "widget"
 internal const val TILE_TYPE_SYSTEM_SLIDER = "system_slider"
+internal const val TILE_TYPE_SCROLLBOX = "scrollbox"
+internal const val TILE_TYPE_WIDGET_STACK = "widget_stack"
 internal const val TEXT_SCALE_STEP = 0.1f
 internal const val TEXT_SCALE_MIN = 0.5f
 internal const val TEXT_SCALE_MAX = 3.0f
@@ -226,6 +229,7 @@ internal data class IntentTileState(
     val intentComponent: String? = null,
     val intentDataUri: String? = null,
     val intentExtras: Map<String, String> = emptyMap(),
+    val unlockToLaunch: Boolean = false,
     override val customLabel: String? = null,
     override val customFontUri: String? = null,
     override val customFontName: String? = null,
@@ -241,6 +245,8 @@ internal fun TileState.copyWithLabel(label: String?): TileState = when (this) {
     is IntentTileState -> copy(customLabel = label)
     is WidgetTileState -> copy(customLabel = label)
     is SystemSliderTileState -> copy(customLabel = label)
+    is ScrollBoxTileState -> copy(customLabel = label)
+    is WidgetStackTileState -> copy(customLabel = label)
 }
 
 internal fun TileState.copyWithFont(uri: String?, name: String?): TileState = when (this) {
@@ -248,6 +254,8 @@ internal fun TileState.copyWithFont(uri: String?, name: String?): TileState = wh
     is IntentTileState -> copy(customFontUri = uri, customFontName = name)
     is WidgetTileState -> this
     is SystemSliderTileState -> this
+    is ScrollBoxTileState -> this
+    is WidgetStackTileState -> this
 }
 
 internal fun TileState.copyWithTextScale(scale: Float?): TileState = when (this) {
@@ -255,6 +263,8 @@ internal fun TileState.copyWithTextScale(scale: Float?): TileState = when (this)
     is IntentTileState -> copy(customTextScale = scale)
     is WidgetTileState -> this
     is SystemSliderTileState -> this
+    is ScrollBoxTileState -> this
+    is WidgetStackTileState -> this
 }
 
 internal fun TileState.copyWithAppTileIconConfig(transform: (AppTileIconConfig) -> AppTileIconConfig): TileState = when (this) {
@@ -267,6 +277,8 @@ internal fun TileState.copyWithBoldText(isBold: Boolean?): TileState = when (thi
     is IntentTileState -> copy(customBoldText = isBold)
     is WidgetTileState -> this
     is SystemSliderTileState -> this
+    is ScrollBoxTileState -> this
+    is WidgetStackTileState -> this
 }
 
 internal fun TileState.copyWithPosition(row: Int, column: Int): TileState = when (this) {
@@ -274,6 +286,8 @@ internal fun TileState.copyWithPosition(row: Int, column: Int): TileState = when
     is IntentTileState -> copy(row = row, column = column)
     is WidgetTileState -> copy(row = row, column = column)
     is SystemSliderTileState -> copy(row = row, column = column)
+    is ScrollBoxTileState -> copy(row = row, column = column)
+    is WidgetStackTileState -> copy(row = row, column = column)
 }
 
 internal fun TileState.copyWithSpan(rowSpan: Int, columnSpan: Int): TileState = when (this) {
@@ -281,6 +295,8 @@ internal fun TileState.copyWithSpan(rowSpan: Int, columnSpan: Int): TileState = 
     is IntentTileState -> copy(rowSpan = rowSpan, columnSpan = columnSpan)
     is WidgetTileState -> copy(rowSpan = rowSpan, columnSpan = columnSpan)
     is SystemSliderTileState -> copy(rowSpan = rowSpan, columnSpan = columnSpan)
+    is ScrollBoxTileState -> copy(rowSpan = rowSpan, columnSpan = columnSpan)
+    is WidgetStackTileState -> copy(rowSpan = rowSpan, columnSpan = columnSpan)
 }
 
 internal enum class SliderType { VOLUME, BRIGHTNESS }
@@ -425,6 +441,66 @@ internal data class WidgetTileState(
         get() = customLabel?.takeIf { it.isNotBlank() } ?: "Widget"
 }
 
+internal enum class ScrollDirection { VERTICAL, HORIZONTAL }
+
+internal enum class ScrollbarEdge { LEFT, RIGHT, TOP, BOTTOM }
+
+/**
+ * A container tile that holds its own scrollable inner grid of [children].
+ *
+ * Its footprint on the parent grid ([row]/[column]/[rowSpan]/[columnSpan]) is the *viewport*;
+ * the inner grid ([innerRows] x [innerColumns]) can exceed that footprint and scrolls in
+ * [scrollDirection]. Children use inner-grid-local coordinates and are restricted to
+ * [AppTileState] / [IntentTileState] (enforced at add-time in the Scrollbox editor).
+ */
+internal data class ScrollBoxTileState(
+    override val id: Int,
+    override val row: Int,
+    override val column: Int,
+    override val rowSpan: Int = 3,
+    override val columnSpan: Int = 3,
+    val scrollDirection: ScrollDirection = ScrollDirection.VERTICAL,
+    val scrollbarEdge: ScrollbarEdge = ScrollbarEdge.RIGHT,
+    val innerRows: Int = 6,
+    val innerColumns: Int = 3,
+    val children: List<TileState> = emptyList(),
+    val nextChildId: Int = 1,
+    override val customLabel: String? = null,
+) : TileState() {
+    override val customFontUri: String? = null
+    override val customFontName: String? = null
+    override val customTextScale: Float? = null
+    override val customBoldText: Boolean? = null
+    override val displayLabel: String
+        get() = customLabel?.takeIf { it.isNotBlank() } ?: "Scrollbox"
+}
+
+/**
+ * A container tile that holds several widgets in one footprint and shows one at a time, paged
+ * horizontally (Niagara-style widget stack). Every child [WidgetTileState] fills the stack's
+ * footprint; the stack only chooses which is visible. Horizontal-only paging deliberately avoids
+ * fighting widgets' own vertical scrolling.
+ */
+internal data class WidgetStackTileState(
+    override val id: Int,
+    override val row: Int,
+    override val column: Int,
+    override val rowSpan: Int = 2,
+    override val columnSpan: Int = 2,
+    val widgets: List<WidgetTileState> = emptyList(),
+    val showPageIndicator: Boolean = true,
+    val autoRotate: Boolean = false,
+    val autoRotateSeconds: Int = 8,
+    override val customLabel: String? = null,
+) : TileState() {
+    override val customFontUri: String? = null
+    override val customFontName: String? = null
+    override val customTextScale: Float? = null
+    override val customBoldText: Boolean? = null
+    override val displayLabel: String
+        get() = customLabel?.takeIf { it.isNotBlank() } ?: "Widget Stack"
+}
+
 internal data class OverlayUiState(
     val showGrid: Boolean = false,
     val dpadOffsetX: Float = 24f,
@@ -501,6 +577,15 @@ internal fun OverlayUiState.extractLayout(): OverlayOrientationLayout = OverlayO
 
 internal fun findTile(tiles: List<TileState>, id: Int?): TileState? =
     tiles.firstOrNull { it.id == id }
+
+/**
+ * True if any tile is (or contains) an app widget — a top-level [WidgetTileState] or a
+ * [WidgetStackTileState] holding at least one widget. Used to decide whether the app-widget host
+ * must be listening so hosted widgets receive their RemoteViews updates.
+ */
+internal fun List<TileState>.hasAnyWidget(): Boolean = any { tile ->
+    tile is WidgetTileState || (tile is WidgetStackTileState && tile.widgets.isNotEmpty())
+}
 
 // ── Overlay composable ───────────────────────────────────────────────────────
 
@@ -1248,94 +1333,16 @@ internal fun OverlayContent(
             onTileLongPress = { tile -> selectedTileId = tile.id; sheetVisible = true },
             onSliderBoundsChanged = { id, bounds -> protectedSliderBounds[id] = bounds },
             widgetContent = { tile ->
-                val providerInfo = remember(tile.appWidgetId, tile.providerComponent) {
-                    appWidgetManager.getAppWidgetInfo(tile.appWidgetId)
-                }
-                if (providerInfo != null) {
-                    AndroidView(
-                        factory = {
-                            WidgetViewCache.getOrCreate(
-                                context = context,
-                                appWidgetId = tile.appWidgetId,
-                                providerInfo = providerInfo,
-                            ).apply {
-                                isLongClickable = !isMoveMode
-                                setOnLongClickListener(
-                                    if (isMoveMode) {
-                                        null
-                                    } else {
-                                        {
-                                            if (initialState.hapticFeedbackEnabled) {
-                                                view.performHapticForcefully(HapticFeedbackType.LongPress)
-                                            }
-                                            selectedTileId = tile.id
-                                            sheetVisible = true
-                                            true
-                                        }
-                                    },
-                                )
-                                isClickable = !isMoveMode
-                                isEnabled = !isMoveMode
-                            }
-                        },
-                        update = { hostView ->
-                            hostView.isLongClickable = !isMoveMode
-                            hostView.setOnLongClickListener(
-                                if (isMoveMode) {
-                                    null
-                                } else {
-                                    {
-                                        if (initialState.hapticFeedbackEnabled) {
-                                            view.performHapticForcefully(HapticFeedbackType.LongPress)
-                                        }
-                                        selectedTileId = tile.id
-                                        sheetVisible = true
-                                        true
-                                    }
-                                },
-                            )
-                            hostView.isClickable = !isMoveMode
-                            hostView.isEnabled = !isMoveMode
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    val providerShortName = tile.providerComponent.substringAfterLast(".")
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(8.dp)
-                            .background(
-                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
-                                RoundedCornerShape(8.dp),
-                            )
-                            .border(
-                                BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
-                                RoundedCornerShape(8.dp),
-                            )
-                            .padding(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Warning,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = "Unavailable",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = providerShortName,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            maxLines = 1,
-                        )
-                    }
-                }
+                WidgetHostView(
+                    tile = tile,
+                    interactive = !isMoveMode,
+                    hapticFeedbackEnabled = initialState.hapticFeedbackEnabled,
+                    onLongPress = {
+                        selectedTileId = tile.id
+                        sheetVisible = true
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
             },
         )
 
@@ -1596,6 +1603,10 @@ internal fun OverlayContent(
                     openIntentFormForEdit(sheetTile.id)
                     sheetVisible = false
                 },
+                onUnlockToLaunchChange = if (sheetTile is IntentTileState) { enabled ->
+                    val idx = tiles.indexOfFirst { it.id == sheetTile.id }
+                    if (idx >= 0) { tiles[idx] = (tiles[idx] as IntentTileState).copy(unlockToLaunch = enabled); persist() }
+                } else null,
                 onSliderConfigChange = if (sheetTile is SystemSliderTileState) { newConfig ->
                     val idx = tiles.indexOfFirst { it.id == sheetTile.id }
                     if (idx >= 0) { tiles[idx] = (tiles[idx] as SystemSliderTileState).copy(config = newConfig); persist() }
@@ -1603,6 +1614,9 @@ internal fun OverlayContent(
                 onDelete = {
                     if (sheetTile is WidgetTileState) {
                         ShortcutHubWidgetHost.getInstance(context).deleteAppWidgetId(sheetTile.appWidgetId)
+                    } else if (sheetTile is WidgetStackTileState) {
+                        val host = ShortcutHubWidgetHost.getInstance(context)
+                        sheetTile.widgets.forEach { host.deleteAppWidgetId(it.appWidgetId) }
                     }
                     tiles.removeAll { it.id == sheetTile.id }
                     selectedTileId = null
@@ -1895,6 +1909,7 @@ private fun TileEditSheet(
     onChooseMaterialIcon: (() -> Unit)?,
     onChangeApp: () -> Unit,
     onEditIntent: () -> Unit,
+    onUnlockToLaunchChange: ((Boolean) -> Unit)?,
     onSliderConfigChange: ((SystemSliderConfig) -> Unit)?,
     onDelete: () -> Unit,
     onDone: () -> Unit,
@@ -1933,6 +1948,8 @@ private fun TileEditSheet(
                         is IntentTileState -> "Intent • ${tile.displayLabel}"
                         is WidgetTileState -> "Widget • ${tile.displayLabel}"
                         is SystemSliderTileState -> "${tile.config.sliderType.name.lowercase().replaceFirstChar { it.uppercase() }} Slider"
+                        is ScrollBoxTileState -> "Scrollbox • ${tile.displayLabel}"
+                        is WidgetStackTileState -> "Widget Stack • ${tile.displayLabel}"
                     }
                     Text(
                         text = typeLabel,
@@ -1941,7 +1958,7 @@ private fun TileEditSheet(
                     )
                     Text(
                         text = "Size ${tile.columnSpan}×${tile.rowSpan}" +
-                            if (tile !is WidgetTileState && tile !is SystemSliderTileState) {
+                            if (tile !is WidgetTileState && tile !is SystemSliderTileState && tile !is ScrollBoxTileState && tile !is WidgetStackTileState) {
                                 "  Text: ${tile.customTextScale?.let { "%.1f×".format(it) } ?: "default"}" +
                                     "  Bold: ${tile.customBoldText?.let { if (it) "on" else "off" } ?: "default"}"
                             } else "",
@@ -1970,7 +1987,7 @@ private fun TileEditSheet(
                     }
 
                     // Text scale + bold (label/intent tiles only)
-                    if (tile !is WidgetTileState && tile !is SystemSliderTileState) {
+                    if (tile !is WidgetTileState && tile !is SystemSliderTileState && tile !is ScrollBoxTileState && tile !is WidgetStackTileState) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(onClick = onTextScaleUp) { Text("S+") }
                             OutlinedButton(onClick = onTextScaleDown) { Text("S-") }
@@ -2001,6 +2018,21 @@ private fun TileEditSheet(
                         is AppTileState -> OutlinedButton(onClick = onChangeApp, modifier = Modifier.fillMaxWidth()) { Text("Change App") }
                         is IntentTileState -> OutlinedButton(onClick = onEditIntent, modifier = Modifier.fillMaxWidth()) { Text("Edit Intent") }
                         else -> Unit
+                    }
+
+                    // Unlock-to-launch toggle (intent tiles only)
+                    if (tile is IntentTileState && onUnlockToLaunchChange != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Require unlock to launch", style = MaterialTheme.typography.bodyMedium)
+                            Switch(
+                                checked = tile.unlockToLaunch,
+                                onCheckedChange = { onUnlockToLaunchChange(it) },
+                            )
+                        }
                     }
 
                     // Slider config (system slider tiles only)

@@ -214,6 +214,111 @@ internal object OverlayStateRepository {
                         },
                     )
                 }
+                if (tile.unlockToLaunch) put("unlockToLaunch", true)
+            }
+            is ScrollBoxTileState -> {
+                put("type", TILE_TYPE_SCROLLBOX)
+                put("scrollDirection", tile.scrollDirection.name)
+                put("scrollbarEdge", tile.scrollbarEdge.name)
+                put("innerRows", tile.innerRows)
+                put("innerColumns", tile.innerColumns)
+                put("nextChildId", tile.nextChildId)
+                put(
+                    "children",
+                    JSONArray().also { arr -> tile.children.forEach { arr.put(serializeTile(it)) } },
+                )
+            }
+            is WidgetStackTileState -> {
+                put("type", TILE_TYPE_WIDGET_STACK)
+                put("showPageIndicator", tile.showPageIndicator)
+                put("autoRotate", tile.autoRotate)
+                put("autoRotateSeconds", tile.autoRotateSeconds)
+                put(
+                    "widgets",
+                    JSONArray().also { arr -> tile.widgets.forEach { arr.put(serializeTile(it)) } },
+                )
+            }
+        }
+    }
+
+    /**
+     * Parse a single tile JSON object into a [TileState], or null if it is malformed / of an
+     * unknown type. Recurses for [ScrollBoxTileState] children (App / Intent only).
+     */
+    private fun parseTile(item: JSONObject): TileState? {
+        val id = item.getInt("id")
+        val row = item.getInt("row")
+        val column = item.getInt("column")
+        val rowSpan = item.optInt("rowSpan", 1).coerceAtLeast(1)
+        val columnSpan = item.optInt("columnSpan", 1).coerceAtLeast(1)
+        val customLabel = item.optString("customLabel").takeIf { it.isNotBlank() }
+        val customFontUri = item.optString("customFontUri").takeIf { it.isNotBlank() }
+        val customFontName = item.optString("customFontName").takeIf { it.isNotBlank() }
+        val customTextScale = if (item.has("customTextScale")) {
+            item.getDouble("customTextScale").toFloat().coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+        } else null
+        val customBoldText = if (item.has("customBoldText")) item.getBoolean("customBoldText") else null
+
+        return when (item.optString("type", TILE_TYPE_APP)) {
+            TILE_TYPE_WIDGET -> {
+                val appWidgetId = item.optInt("appWidgetId", -1)
+                val providerComponent = item.optString("providerComponent").takeIf { it.isNotBlank() }
+                if (appWidgetId < 0 || providerComponent == null) return null
+                WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel)
+            }
+            TILE_TYPE_SYSTEM_SLIDER -> {
+                val sliderType = SliderType.entries.firstOrNull { it.name == item.optString("sliderType") } ?: return null
+                val streamMode = StreamMode.entries.firstOrNull { it.name == item.optString("streamMode", StreamMode.DEFAULT.name) } ?: StreamMode.DEFAULT
+                val singleStream = AudioStreamType.entries.firstOrNull { it.name == item.optString("singleStream", AudioStreamType.MUSIC.name) } ?: AudioStreamType.MUSIC
+                val buttonPlacement = SliderButtonPlacement.entries.firstOrNull { it.name == item.optString("buttonPlacement", SliderButtonPlacement.SPLIT.name) } ?: SliderButtonPlacement.SPLIT
+                val notchMode = SliderNotchMode.entries.firstOrNull { it.name == item.optString("notchMode", SliderNotchMode.LOCK_AND_SLIDE.name) } ?: SliderNotchMode.LOCK_AND_SLIDE
+                SystemSliderTileState(id, row, column, rowSpan, columnSpan, SystemSliderConfig(sliderType, streamMode, singleStream, buttonPlacement, notchMode, item.optBoolean("showNotches", true), item.optInt("buttonStepSize", 1), item.optBoolean("showOutline", false), item.optBoolean("buttonHapticsEnabled", false), item.optBoolean("notchHapticsEnabled", false)), customLabel)
+            }
+            TILE_TYPE_INTENT -> {
+                val action = item.optString("intentAction").takeIf { it.isNotBlank() } ?: return null
+                val intentType = IntentType.entries.firstOrNull { it.name == item.optString("intentType", IntentType.ACTIVITY.name) } ?: IntentType.ACTIVITY
+                val extrasObj = item.optJSONObject("intentExtras")
+                val extras = buildMap<String, String> { extrasObj?.keys()?.forEach { k -> put(k, extrasObj.getString(k)) } }
+                val unlockToLaunch = item.optBoolean("unlockToLaunch", false)
+                IntentTileState(id, row, column, rowSpan, columnSpan, action, intentType, item.optString("intentPackage").takeIf { it.isNotBlank() }, item.optString("intentComponent").takeIf { it.isNotBlank() }, item.optString("intentDataUri").takeIf { it.isNotBlank() }, extras, unlockToLaunch, customLabel, customFontUri, customFontName, customTextScale, customBoldText)
+            }
+            TILE_TYPE_SCROLLBOX -> {
+                val scrollDirection = ScrollDirection.entries.firstOrNull { it.name == item.optString("scrollDirection") } ?: ScrollDirection.VERTICAL
+                val scrollbarEdge = ScrollbarEdge.entries.firstOrNull { it.name == item.optString("scrollbarEdge") } ?: ScrollbarEdge.RIGHT
+                val innerRows = item.optInt("innerRows", 6).coerceAtLeast(1)
+                val innerColumns = item.optInt("innerColumns", 3).coerceAtLeast(1)
+                val childArray = item.optJSONArray("children") ?: JSONArray()
+                val children = buildList<TileState> {
+                    for (j in 0 until childArray.length()) {
+                        val child = runCatching { parseTile(childArray.getJSONObject(j)) }.getOrNull() ?: continue
+                        // Only App / Intent tiles are valid inside a scrollbox; drop anything else defensively.
+                        if (child !is AppTileState && child !is IntentTileState) continue
+                        if (child.row < innerRows && child.column < innerColumns &&
+                            child.row + child.rowSpan <= innerRows && child.column + child.columnSpan <= innerColumns
+                        ) add(child)
+                    }
+                }
+                val nextChildId = item.optInt("nextChildId", children.maxOfOrNull { it.id + 1 } ?: 1)
+                ScrollBoxTileState(id, row, column, rowSpan, columnSpan, scrollDirection, scrollbarEdge, innerRows, innerColumns, children, nextChildId, customLabel)
+            }
+            TILE_TYPE_WIDGET_STACK -> {
+                val widgetArray = item.optJSONArray("widgets") ?: JSONArray()
+                val widgets = buildList<WidgetTileState> {
+                    for (j in 0 until widgetArray.length()) {
+                        val child = runCatching { parseTile(widgetArray.getJSONObject(j)) }.getOrNull()
+                        if (child is WidgetTileState) add(child)
+                    }
+                }
+                val showPageIndicator = item.optBoolean("showPageIndicator", true)
+                val autoRotate = item.optBoolean("autoRotate", false)
+                val autoRotateSeconds = item.optInt("autoRotateSeconds", 8).coerceIn(3, 60)
+                WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel)
+            }
+            else -> {
+                val component = item.optString("component").takeIf { it.isNotBlank() }?.let(ComponentName::unflattenFromString)
+                val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
+                val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
+                AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(item.getString("label"), component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText)
             }
         }
     }
@@ -227,49 +332,8 @@ internal object OverlayStateRepository {
         val tilesArray = layoutObj.optJSONArray("tiles") ?: JSONArray()
         val tiles = buildList<TileState> {
             for (i in 0 until tilesArray.length()) {
-                val item = tilesArray.getJSONObject(i)
-                val id = item.getInt("id")
-                val row = item.getInt("row")
-                val column = item.getInt("column")
-                val rowSpan = item.optInt("rowSpan", 1).coerceAtLeast(1)
-                val columnSpan = item.optInt("columnSpan", 1).coerceAtLeast(1)
-                val customLabel = item.optString("customLabel").takeIf { it.isNotBlank() }
-                val customFontUri = item.optString("customFontUri").takeIf { it.isNotBlank() }
-                val customFontName = item.optString("customFontName").takeIf { it.isNotBlank() }
-                val customTextScale = if (item.has("customTextScale")) {
-                    item.getDouble("customTextScale").toFloat().coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-                } else null
-                val customBoldText = if (item.has("customBoldText")) item.getBoolean("customBoldText") else null
-
-                when (item.optString("type", TILE_TYPE_APP)) {
-                    TILE_TYPE_WIDGET -> {
-                        val appWidgetId = item.optInt("appWidgetId", -1)
-                        val providerComponent = item.optString("providerComponent").takeIf { it.isNotBlank() }
-                        if (appWidgetId < 0 || providerComponent == null) continue
-                        add(WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel))
-                    }
-                    TILE_TYPE_SYSTEM_SLIDER -> {
-                        val sliderType = SliderType.entries.firstOrNull { it.name == item.optString("sliderType") } ?: continue
-                        val streamMode = StreamMode.entries.firstOrNull { it.name == item.optString("streamMode", StreamMode.DEFAULT.name) } ?: StreamMode.DEFAULT
-                        val singleStream = AudioStreamType.entries.firstOrNull { it.name == item.optString("singleStream", AudioStreamType.MUSIC.name) } ?: AudioStreamType.MUSIC
-                        val buttonPlacement = SliderButtonPlacement.entries.firstOrNull { it.name == item.optString("buttonPlacement", SliderButtonPlacement.SPLIT.name) } ?: SliderButtonPlacement.SPLIT
-                        val notchMode = SliderNotchMode.entries.firstOrNull { it.name == item.optString("notchMode", SliderNotchMode.LOCK_AND_SLIDE.name) } ?: SliderNotchMode.LOCK_AND_SLIDE
-                        add(SystemSliderTileState(id, row, column, rowSpan, columnSpan, SystemSliderConfig(sliderType, streamMode, singleStream, buttonPlacement, notchMode, item.optBoolean("showNotches", true), item.optInt("buttonStepSize", 1), item.optBoolean("showOutline", false), item.optBoolean("buttonHapticsEnabled", false), item.optBoolean("notchHapticsEnabled", false)), customLabel))
-                    }
-                    TILE_TYPE_INTENT -> {
-                        val action = item.optString("intentAction").takeIf { it.isNotBlank() } ?: continue
-                        val intentType = IntentType.entries.firstOrNull { it.name == item.optString("intentType", IntentType.ACTIVITY.name) } ?: IntentType.ACTIVITY
-                        val extrasObj = item.optJSONObject("intentExtras")
-                        val extras = buildMap<String, String> { extrasObj?.keys()?.forEach { k -> put(k, extrasObj.getString(k)) } }
-                        add(IntentTileState(id, row, column, rowSpan, columnSpan, action, intentType, item.optString("intentPackage").takeIf { it.isNotBlank() }, item.optString("intentComponent").takeIf { it.isNotBlank() }, item.optString("intentDataUri").takeIf { it.isNotBlank() }, extras, customLabel, customFontUri, customFontName, customTextScale, customBoldText))
-                    }
-                    else -> {
-                        val component = item.optString("component").takeIf { it.isNotBlank() }?.let(ComponentName::unflattenFromString)
-                        val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
-                        val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
-                        add(AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(item.getString("label"), component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText))
-                    }
-                }
+                val tile = parseTile(tilesArray.getJSONObject(i)) ?: continue
+                add(tile)
             }
         }.filter { tile ->
             tile.row < gridRows && tile.column < gridColumns &&

@@ -89,8 +89,8 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:showWhenLocked="true"
-            android:taskAffinity=""
-            android:theme="@style/Theme.ShortcutHub.Transparent"
+            android:taskAffinity="com.fabiantorrestech.androidshortcuthub.unlock"
+            android:theme="@style/Theme.ShortcutHub.UnlockTrampoline"
             android:turnScreenOn="true" />
 
         <activity

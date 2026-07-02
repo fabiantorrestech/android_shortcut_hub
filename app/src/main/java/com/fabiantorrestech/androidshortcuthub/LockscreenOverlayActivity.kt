@@ -116,7 +116,7 @@ class LockscreenOverlayActivity : ComponentActivity() {
                         onPersist = { state, orientation ->
                             OverlayStateRepository.saveLayout(this@LockscreenOverlayActivity, state, orientation)
                         },
-                        onDismiss = ::finish,
+                        onDismiss = ::dismissOverlay,
                     )
                 }
             }
@@ -137,7 +137,7 @@ class LockscreenOverlayActivity : ComponentActivity() {
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
-        if (widgetHostListening || state.tiles.none { it is WidgetTileState }) return
+        if (widgetHostListening || !state.tiles.hasAnyWidget()) return
         ShortcutHubWidgetHost.getInstance(this).startListening(this)
         widgetHostListening = true
     }
@@ -178,9 +178,56 @@ class LockscreenOverlayActivity : ComponentActivity() {
             .distinctBy { "${it.label}|${it.packageName}|${it.componentName?.flattenToString().orEmpty()}|${it.launchIntentUri.orEmpty()}" }
             .sortedBy { it.label.lowercase() }
 
+    // Set while a keyguard-dismiss prompt is showing for an unlock-to-launch tile.
+    // Suppresses the immediate finish() that onTileTap requests, so this activity stays
+    // alive to host the KeyguardManager.requestDismissKeyguard callback. The callback
+    // finishes us once auth completes (or is cancelled).
+    private var unlockInProgress = false
+
+    private fun dismissOverlay() {
+        if (unlockInProgress) return
+        finish()
+    }
+
+    /**
+     * Runs [dispatch] once the keyguard is dismissed. This activity is already a visible
+     * showWhenLocked activity, so it can call requestDismissKeyguard on itself directly —
+     * no trampoline hop, which avoids the task/affinity race that previously dropped the
+     * launch. Secure locks show the PIN/pattern/biometric prompt; insecure locks just
+     * dismiss. When already unlocked, [dispatch] runs immediately and the normal
+     * onTileTap dismiss handles cleanup.
+     */
+    private fun unlockThenDispatch(dispatch: () -> Unit) {
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        if (km == null || !km.isKeyguardLocked) {
+            runCatching(dispatch).onFailure { Log.e(TAG, "dispatch failed (not locked)", it) }
+            return
+        }
+        unlockInProgress = true
+        km.requestDismissKeyguard(this, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() {
+                runCatching(dispatch).onFailure { Log.e(TAG, "dispatch failed after unlock", it) }
+                unlockInProgress = false
+                finish()
+            }
+            override fun onDismissCancelled() {
+                unlockInProgress = false
+                finish()
+            }
+            override fun onDismissError() {
+                unlockInProgress = false
+                finish()
+            }
+        })
+    }
+
     private fun launchApp(app: LaunchableApp) {
-        val target = buildAppLaunchIntent(app) ?: return
-        startActivityWithKeyguard(target)
+        val target = buildAppLaunchIntent(app) ?: run {
+            Log.e(TAG, "launchApp: buildAppLaunchIntent returned null for '${app.label}' pkg=${app.componentName?.packageName}")
+            return
+        }
+        // Opening an app inherently requires the device unlocked, so always route through unlock.
+        unlockThenDispatch { startActivity(target) }
     }
 
     private fun launchIntent(tile: IntentTileState) {
@@ -192,12 +239,17 @@ class LockscreenOverlayActivity : ComponentActivity() {
             tile.intentDataUri?.let { data = Uri.parse(it) }
             tile.intentExtras.forEach { (k, v) -> putExtra(k, v) }
         }
-        runCatching {
+        val dispatch: () -> Unit = {
             when (tile.intentType) {
-                IntentType.ACTIVITY -> startActivityWithKeyguard(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                IntentType.ACTIVITY -> startActivity(intent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                 IntentType.BROADCAST_RECEIVER -> sendBroadcast(intent)
                 IntentType.SERVICE -> startService(intent)
             }
+        }
+        if (tile.unlockToLaunch) {
+            unlockThenDispatch(dispatch)
+        } else {
+            runCatching(dispatch).onFailure { Log.e(TAG, "launchIntent dispatch failed", it) }
         }
     }
 
@@ -215,12 +267,6 @@ class LockscreenOverlayActivity : ComponentActivity() {
             app.launchIntentPackage?.let { setPackage(it) }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-    }
-
-    private fun startActivityWithKeyguard(intent: Intent) {
-        runCatching { startActivity(intent) }
-        // If locked, Android shows the keyguard before the target app; finish() via
-        // requestDismiss() in the tap handler clears this activity from the stack.
     }
 
     private fun resolveCustomPackage(packageName: String): LaunchableApp? {

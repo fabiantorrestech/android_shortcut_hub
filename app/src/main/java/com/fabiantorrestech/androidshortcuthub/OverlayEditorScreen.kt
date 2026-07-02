@@ -81,6 +81,34 @@ internal fun OverlayEditorScreen(
     var activeTab by remember { mutableStateOf(OverlayOrientation.PORTRAIT) }
     val editorState = if (activeTab == OverlayOrientation.PORTRAIT) portraitEditorState else landscapeEditorState
 
+    // When set, a container editor takes over the whole screen (swap, not overlay), so the shared
+    // font/icon pick and widget-bind events route to exactly one consumer. Both ids are declared
+    // before either early-return so their remembered state is always present.
+    var editingScrollBoxId by remember { mutableStateOf<Int?>(null) }
+    var editingWidgetStackId by remember { mutableStateOf<Int?>(null) }
+    val currentEditingScrollBoxId = editingScrollBoxId
+    if (currentEditingScrollBoxId != null) {
+        ScrollBoxEditorScreen(
+            parentEditorState = editorState,
+            scrollBoxId = currentEditingScrollBoxId,
+            onBack = { editingScrollBoxId = null },
+            openFontPicker = openFontPicker,
+            openIconPicker = openIconPicker,
+            fontEvents = fontEvents,
+            iconEvents = iconEvents,
+        )
+        return
+    }
+    val currentEditingWidgetStackId = editingWidgetStackId
+    if (currentEditingWidgetStackId != null) {
+        WidgetStackEditorScreen(
+            parentEditorState = editorState,
+            widgetStackId = currentEditingWidgetStackId,
+            onBack = { editingWidgetStackId = null },
+        )
+        return
+    }
+
     fun syncGlobalsFromActive() {
         val from = editorState
         val to = if (activeTab == OverlayOrientation.PORTRAIT) landscapeEditorState else portraitEditorState
@@ -481,6 +509,52 @@ internal fun OverlayEditorScreen(
                         }) { Text("+ Intent") }
 
                         OutlinedButton(onClick = {
+                            val fit = listOf(3, 2, 1).firstNotNullOfOrNull { s ->
+                                editorState.findFirstOpenCell(s, s)?.let { it to s }
+                            }
+                            if (fit == null) {
+                                Toast.makeText(context, "No space on grid for a scrollbox", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val (cell, span) = fit
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                ScrollBoxTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    rowSpan = span,
+                                    columnSpan = span,
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                            Toast.makeText(context, "Tap the scrollbox, then 'Edit contents' in the inspector", Toast.LENGTH_SHORT).show()
+                        }) { Text("+ Scrollbox") }
+
+                        OutlinedButton(onClick = {
+                            val fit = listOf(2, 1).firstNotNullOfOrNull { s ->
+                                editorState.findFirstOpenCell(s, s)?.let { it to s }
+                            }
+                            if (fit == null) {
+                                Toast.makeText(context, "No space on grid for a widget stack", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val (cell, span) = fit
+                            val newId = editorState.nextTileId++
+                            editorState.addTile(
+                                WidgetStackTileState(
+                                    id = newId,
+                                    row = cell.first,
+                                    column = cell.second,
+                                    rowSpan = span,
+                                    columnSpan = span,
+                                ),
+                            )
+                            editorState.selectedTileId = newId
+                            editingWidgetStackId = newId
+                        }) { Text("+ Widget Stack") }
+
+                        OutlinedButton(onClick = {
                             val count = editorState.tiles.count {
                                 it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
                             }
@@ -554,13 +628,13 @@ internal fun OverlayEditorScreen(
                                         )
                                 }
                             },
-                            loadLaunchableApps = {
-                                editorState.savedState.tiles.filterIsInstance<AppTileState>().map { it.app }
-                            },
+                            loadLaunchableApps = { loadInstalledLaunchableApps(context) },
                             openFontPicker = openFontPicker,
                             openIconPicker = openIconPicker,
                             fontEvents = fontEvents,
                             iconEvents = iconEvents,
+                            onEditScrollBox = { editingScrollBoxId = it },
+                            onEditWidgetStack = { editingWidgetStackId = it },
                         )
                     }
 
@@ -724,6 +798,54 @@ internal fun OverlayEditorScreen(
                     Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
                 }) { Text("+ Intent") }
 
+                // + Scrollbox
+                OutlinedButton(onClick = {
+                    val fit = listOf(3, 2, 1).firstNotNullOfOrNull { s ->
+                        editorState.findFirstOpenCell(s, s)?.let { it to s }
+                    }
+                    if (fit == null) {
+                        Toast.makeText(context, "No space on grid for a scrollbox", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val (cell, span) = fit
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        ScrollBoxTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            rowSpan = span,
+                            columnSpan = span,
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                    Toast.makeText(context, "Tap the scrollbox, then 'Edit contents' in the inspector", Toast.LENGTH_SHORT).show()
+                }) { Text("+ Scrollbox") }
+
+                // + Widget Stack
+                OutlinedButton(onClick = {
+                    val fit = listOf(2, 1).firstNotNullOfOrNull { s ->
+                        editorState.findFirstOpenCell(s, s)?.let { it to s }
+                    }
+                    if (fit == null) {
+                        Toast.makeText(context, "No space on grid for a widget stack", Toast.LENGTH_SHORT).show()
+                        return@OutlinedButton
+                    }
+                    val (cell, span) = fit
+                    val newId = editorState.nextTileId++
+                    editorState.addTile(
+                        WidgetStackTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            rowSpan = span,
+                            columnSpan = span,
+                        ),
+                    )
+                    editorState.selectedTileId = newId
+                    editingWidgetStackId = newId
+                }) { Text("+ Widget Stack") }
+
                 // + Volume Slider
                 OutlinedButton(onClick = {
                     val count = editorState.tiles.count {
@@ -800,13 +922,13 @@ internal fun OverlayEditorScreen(
                                 )
                         }
                     },
-                    loadLaunchableApps = {
-                        editorState.savedState.tiles.filterIsInstance<AppTileState>().map { it.app }
-                    },
+                    loadLaunchableApps = { loadInstalledLaunchableApps(context) },
                     openFontPicker = openFontPicker,
                     openIconPicker = openIconPicker,
                     fontEvents = fontEvents,
                     iconEvents = iconEvents,
+                    onEditScrollBox = { editingScrollBoxId = it },
+                    onEditWidgetStack = { editingWidgetStackId = it },
                 )
             }
 
