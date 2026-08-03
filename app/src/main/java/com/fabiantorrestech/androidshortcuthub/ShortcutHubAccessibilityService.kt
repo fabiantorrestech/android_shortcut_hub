@@ -328,6 +328,20 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
                 syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
+            } catch (e: Exception) {
+                // Without this catch an exception here (e.g. addView, font loading, or the first
+                // Compose composition) propagates uncaught on the main thread and crashes the
+                // process. Because Android auto-rebinds a crashed accessibility service, that turns
+                // into a continuous "app keeps stopping" loop. Log and roll back any half-built
+                // overlay state so the next toggle starts clean instead of re-crashing or wedging.
+                Log.e(TAG, "showOverlay failed", e)
+                overlayLifecycleOwner?.destroy()
+                overlayLifecycleOwner = null
+                overlayView?.let {
+                    runCatching { if (it.isAttachedToWindow) windowManager.removeViewImmediate(it) }
+                }
+                overlayView = null
+                overlayParams = null
             } finally {
                 isShowingOverlay = false
             }

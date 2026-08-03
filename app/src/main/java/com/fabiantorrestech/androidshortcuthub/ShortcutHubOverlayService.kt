@@ -270,6 +270,14 @@ class ShortcutHubOverlayService : Service() {
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
             } catch (e: Exception) {
                 Log.e(TAG, "showOverlay failed", e)
+                // Roll back any half-built overlay state so the next toggle starts clean.
+                overlayLifecycleOwner?.destroy()
+                overlayLifecycleOwner = null
+                overlayView?.let {
+                    runCatching { if (it.isAttachedToWindow) windowManager.removeViewImmediate(it) }
+                }
+                overlayView = null
+                overlayParams = null
             } finally {
                 isShowingOverlay = false
             }
