@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Typeface
+import android.util.Log
 import android.net.Uri
 import androidx.compose.ui.text.font.FontFamily
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private const val AUTO_BACKUP_DEBOUNCE_MS = 10 * 60 * 1000L // 10 minutes
+private const val TAG = "ShortcutHubApplication"
 
 class ShortcutHubApplication : Application() {
 
@@ -63,16 +65,25 @@ class ShortcutHubApplication : Application() {
     }
 
     private fun cleanOrphanWidgetIds(widgetHost: ShortcutHubWidgetHost) {
-        val persistedIds = loadPersistedWidgetIds()
+        val persistedIds = loadPersistedWidgetIds() ?: run {
+            // null == "layout unreadable / absent", NOT "no widgets". Deleting every host id here
+            // would permanently wipe live widgets (their bindings are unrecoverable). Skip instead.
+            Log.w(TAG, "Skipping orphan widget cleanup — layout unreadable; not deleting any ids")
+            return
+        }
         widgetHost.appWidgetIds
             .filterNot { it in persistedIds }
             .forEach(widgetHost::deleteAppWidgetId)
     }
 
-    private fun loadPersistedWidgetIds(): Set<Int> {
+    // Returns the set of appWidgetIds referenced by the saved layout, or null if the layout can't be
+    // read/parsed. null means "unknown" — callers MUST NOT treat it as "no widgets", because deleting
+    // every host id on an unreadable layout permanently wipes live widgets. A successfully parsed
+    // layout with no widgets correctly returns an empty set (so genuine orphans are still cleaned).
+    private fun loadPersistedWidgetIds(): Set<Int>? {
         val raw = getSharedPreferences(OVERLAY_PREFS_NAME, Context.MODE_PRIVATE)
             .getString(OVERLAY_PREFS_KEY_STATE, null)
-            ?: return emptySet()
+            ?: return null
 
         return runCatching {
             val root = JSONObject(raw)
@@ -108,7 +119,7 @@ class ShortcutHubApplication : Application() {
                 extractFrom(root)
             }
             widgetIds
-        }.getOrDefault(emptySet())
+        }.getOrNull()
     }
 
     private fun warmOverlayServiceIfEligible() {
