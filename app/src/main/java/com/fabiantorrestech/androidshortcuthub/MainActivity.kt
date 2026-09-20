@@ -767,6 +767,13 @@ private fun BehaviorTab(
                     onCheckedChange = { onConfigChange(config.copy(dismissOnScreenOff = it)) },
                 )
                 SettingToggleRow(
+                    label = "Dismiss overlay on widget activity",
+                    description = "Tapping something inside a widget closes the overlay. " +
+                        "Scrolling and swiping don't count. Individual widgets can override this.",
+                    checked = config.dismissOnWidgetActivity,
+                    onCheckedChange = { onConfigChange(config.copy(dismissOnWidgetActivity = it)) },
+                )
+                SettingToggleRow(
                     label = "Haptic feedback on tile press",
                     checked = config.hapticFeedbackEnabled,
                     onCheckedChange = { onConfigChange(config.copy(hapticFeedbackEnabled = it)) },
@@ -1061,9 +1068,7 @@ private fun LayoutTab(
             OverlayStateRepository.saveLayout(context, landscapeCommitted, OverlayOrientation.LANDSCAPE)
             onSaveSettings(portraitCommitted)
             Toast.makeText(context, "Layout saved. Toggle the overlay to apply.", Toast.LENGTH_SHORT).show()
-            onBack()
         },
-        onDiscard = { onBack() },
         openFontPicker = onOpenFontPicker,
         openIconPicker = onOpenIconPicker,
         openDefaultFontPicker = onOpenDefaultFontPicker,

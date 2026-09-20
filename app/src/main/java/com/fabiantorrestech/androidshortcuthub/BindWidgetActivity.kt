@@ -9,6 +9,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -76,6 +78,11 @@ class BindWidgetActivity : ComponentActivity() {
         private const val EXTRA_HAS_VOLUME_SLIDER = "has_volume_slider"
         private const val EXTRA_HAS_BRIGHTNESS_SLIDER = "has_brightness_slider"
         private const val EXTRA_AUTO_TOGGLE_OVERLAY = "auto_toggle_overlay"
+        private const val EXTRA_DIRECT_PROVIDER = "direct_provider"
+
+        // Kept below 65536: androidx's ActivityResultRegistry allocates its request codes from
+        // [65536, Int.MAX_VALUE], so this can never collide with a registered launcher.
+        private const val CONFIGURE_REQUEST_CODE = 4201
 
         private val tileInsertionResults = MutableSharedFlow<TileInsertionEvent>(extraBufferCapacity = 1)
 
@@ -86,14 +93,22 @@ class BindWidgetActivity : ComponentActivity() {
             hasVolumeSlider: Boolean = false,
             hasBrightnessSlider: Boolean = false,
             autoToggleOverlay: Boolean = true,
+            directProviderComponent: String? = null,
+            newTask: Boolean = false,
         ): Intent {
             return Intent(context, BindWidgetActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // Editor callers launch from an Activity and MUST stay in the same task. Launching into
+                // a separate task (this activity has taskAffinity="") makes the ON_RESUME result
+                // hand-off to MainActivity unreliable and crashes on cross-task lifecycle races
+                // (window DeadObjectException / "top resumed state loss timeout" → process restart).
+                // Only the overlay (a Service context) genuinely needs a new task.
+                if (newTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 putExtra(EXTRA_GRID_ROWS, gridRows)
                 putExtra(EXTRA_GRID_COLUMNS, gridColumns)
                 putExtra(EXTRA_HAS_VOLUME_SLIDER, hasVolumeSlider)
                 putExtra(EXTRA_HAS_BRIGHTNESS_SLIDER, hasBrightnessSlider)
                 putExtra(EXTRA_AUTO_TOGGLE_OVERLAY, autoToggleOverlay)
+                directProviderComponent?.let { putExtra(EXTRA_DIRECT_PROVIDER, it) }
             }
         }
 
@@ -111,6 +126,11 @@ class BindWidgetActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val appWidgetId = extractAppWidgetId(result.data)
+        Log.d(
+            WIDGET_BIND_TAG,
+            "bindWidgetLauncher result: code=${result.resultCode} (OK=${Activity.RESULT_OK}) " +
+                "dataId=${result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)} resolvedId=$appWidgetId",
+        )
         if (result.resultCode == Activity.RESULT_OK && appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             openConfigureIfNeeded(appWidgetId)
         } else {
@@ -122,6 +142,11 @@ class BindWidgetActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val appWidgetId = extractAppWidgetId(result.data)
+        Log.d(
+            WIDGET_BIND_TAG,
+            "configureWidgetLauncher result: code=${result.resultCode} (OK=${Activity.RESULT_OK}) " +
+                "dataId=${result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)} resolvedId=$appWidgetId",
+        )
         if (result.resultCode == Activity.RESULT_OK && appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             emitResultAndFinish(appWidgetId)
         } else {
@@ -131,6 +156,21 @@ class BindWidgetActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val directProvider = intent.getStringExtra(EXTRA_DIRECT_PROVIDER)
+            ?.let { ComponentName.unflattenFromString(it) }
+        if (directProvider != null) {
+            // Direct-bind (widget-stack Refresh): skip the picker and bind this exact provider
+            // immediately, reusing the normal allocate → bind → (consent) → configure → emit chain.
+            // Guarded by savedInstanceState == null so a config-change recreation can't allocate twice.
+            if (savedInstanceState == null) {
+                val providerInfo = appWidgetManager.installedProviders.firstOrNull { it.provider == directProvider }
+                if (providerInfo == null) cleanupAndFinish(AppWidgetManager.INVALID_APPWIDGET_ID)
+                else startBindingFlow(providerInfo)
+            }
+            return
+        }
+
         val gridRows = intent.getIntExtra(EXTRA_GRID_ROWS, 8)
         val gridColumns = intent.getIntExtra(EXTRA_GRID_COLUMNS, 4)
         val hasVolumeSlider = intent.getBooleanExtra(EXTRA_HAS_VOLUME_SLIDER, false)
@@ -152,6 +192,11 @@ class BindWidgetActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        Log.d(
+            WIDGET_BIND_TAG,
+            "BindWidgetActivity.onDestroy hasCompletedFlow=$hasCompletedFlow pendingId=$pendingAppWidgetId " +
+                "isFinishing=$isFinishing isChangingConfigurations=$isChangingConfigurations",
+        )
         if (!hasCompletedFlow && pendingAppWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             cleanupAppWidgetId(pendingAppWidgetId)
         }
@@ -171,6 +216,11 @@ class BindWidgetActivity : ComponentActivity() {
 
         val provider = providerInfo.provider
         val didBind = appWidgetManager.bindAppWidgetIdIfAllowed(pendingAppWidgetId, provider)
+        Log.d(
+            WIDGET_BIND_TAG,
+            "startBindingFlow provider=${provider.flattenToShortString()} allocatedId=$pendingAppWidgetId " +
+                "didBind=$didBind configure=${providerInfo.configure?.flattenToShortString()} taskId=$taskId",
+        )
         if (didBind) {
             openConfigureIfNeeded(pendingAppWidgetId)
             return
@@ -186,15 +236,85 @@ class BindWidgetActivity : ComponentActivity() {
 
     private fun openConfigureIfNeeded(appWidgetId: Int) {
         val providerInfo = appWidgetManager.getAppWidgetInfo(appWidgetId)
-        if (providerInfo == null) { cleanupAndFinish(appWidgetId); return }
+        if (providerInfo == null) {
+            Log.d(WIDGET_BIND_TAG, "openConfigureIfNeeded id=$appWidgetId -> getAppWidgetInfo NULL, aborting")
+            cleanupAndFinish(appWidgetId); return
+        }
         val configureComponent = providerInfo.configure
-        if (configureComponent == null) { emitResultAndFinish(appWidgetId); return }
-        configureWidgetLauncher.launch(
-            Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
-                component = configureComponent
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-            },
+        Log.d(
+            WIDGET_BIND_TAG,
+            "openConfigureIfNeeded id=$appWidgetId configure=${configureComponent?.flattenToShortString() ?: "none"}",
         )
+        if (configureComponent == null) { emitResultAndFinish(appWidgetId); return }
+
+        // Launch the configure activity through the HOST, not with an explicit Intent. Many apps
+        // (e.g. Beeminder) declare their config activity android:exported="false"; starting it
+        // directly throws SecurityException "not exported from uid ..." and kills the process. The
+        // host route uses an IntentSender minted by the system server, which is permitted to launch
+        // a non-exported config activity. Result comes back via onActivityResult, NOT the launcher.
+        val startedViaHost = runCatching {
+            widgetHost.startAppWidgetConfigureActivityForResult(
+                this,
+                appWidgetId,
+                0,
+                CONFIGURE_REQUEST_CODE,
+                null,
+            )
+        }
+        if (startedViaHost.isSuccess) {
+            Log.d(WIDGET_BIND_TAG, "openConfigureIfNeeded id=$appWidgetId launched via host IntentSender")
+            return
+        }
+        Log.w(
+            WIDGET_BIND_TAG,
+            "openConfigureIfNeeded id=$appWidgetId host launch failed, falling back to explicit intent",
+            startedViaHost.exceptionOrNull(),
+        )
+
+        // Fallback for hosts/ROMs where the IntentSender route is unavailable. Guarded so a denial
+        // here abandons the bind cleanly instead of crashing the app.
+        val fellBack = runCatching {
+            configureWidgetLauncher.launch(
+                Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                    component = configureComponent
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                },
+            )
+        }
+        if (fellBack.isFailure) {
+            Log.e(
+                WIDGET_BIND_TAG,
+                "openConfigureIfNeeded id=$appWidgetId explicit-intent fallback ALSO failed",
+                fellBack.exceptionOrNull(),
+            )
+            Toast.makeText(
+                this,
+                "This widget's setup screen can't be opened on this device.",
+                Toast.LENGTH_LONG,
+            ).show()
+            cleanupAndFinish(appWidgetId)
+        }
+    }
+
+    // AppWidgetHost.startAppWidgetConfigureActivityForResult predates the ActivityResult APIs and
+    // delivers through startIntentSenderForResult, so its result lands here rather than in a launcher.
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != CONFIGURE_REQUEST_CODE) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val appWidgetId = extractAppWidgetId(data)
+        Log.d(
+            WIDGET_BIND_TAG,
+            "onActivityResult(configure via host): code=$resultCode (OK=${Activity.RESULT_OK}) " +
+                "dataId=${data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)} resolvedId=$appWidgetId",
+        )
+        if (resultCode == Activity.RESULT_OK && appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            emitResultAndFinish(appWidgetId)
+        } else {
+            cleanupAndFinish(appWidgetId)
+        }
     }
 
     private fun emitResultAndFinish(appWidgetId: Int) {
@@ -204,6 +324,7 @@ class BindWidgetActivity : ComponentActivity() {
         val event = TileInsertionEvent.WidgetAdded(
             WidgetTileSelection(appWidgetId = appWidgetId, providerComponent = providerComponent),
         )
+        Log.d(WIDGET_BIND_TAG, "emitResultAndFinish id=$appWidgetId provider=$providerComponent autoToggle=$autoToggleOverlay")
         WidgetBindingCoordinator.completeInsertion(event)
         tileInsertionResults.tryEmit(event)
         hasCompletedFlow = true
@@ -228,6 +349,11 @@ class BindWidgetActivity : ComponentActivity() {
     }
 
     private fun cleanupAndFinish(appWidgetId: Int) {
+        Log.d(
+            WIDGET_BIND_TAG,
+            "cleanupAndFinish id=$appWidgetId — bind ABANDONED, widget id deleted and coordinator cleared",
+            Throwable("cleanupAndFinish call site"),
+        )
         cleanupAppWidgetId(appWidgetId)
         hasCompletedFlow = true
         pendingAppWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID

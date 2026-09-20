@@ -222,6 +222,13 @@ internal fun OverlayTileInspector(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Configure widget...") }
                 }
+
+                WidgetDismissModeControls(
+                    mode = tile.dismissOnActivity,
+                    onModeChange = { newMode ->
+                        editorState.updateTile(tile.id) { (it as WidgetTileState).copy(dismissOnActivity = newMode) }
+                    },
+                )
             }
             is SystemSliderTileState -> {
                 SliderConfigControls(
@@ -319,6 +326,43 @@ internal fun OverlayTileInspector(
             ),
         ) { Text("Delete tile") }
     }
+}
+
+/**
+ * Three-way "dismiss the overlay when this widget is used" control, shared by the tile inspector and
+ * the widget-stack editor. The "Use default" label spells out the current app-level setting so the
+ * option isn't opaque.
+ */
+@Composable
+internal fun WidgetDismissModeControls(
+    mode: WidgetDismissMode,
+    onModeChange: (WidgetDismissMode) -> Unit,
+) {
+    val context = LocalContext.current
+    val globalDefault = remember { ShortcutHubSettings.load(context).dismissOnWidgetActivity }
+
+    Text(
+        "Dismiss on activity",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ScrollBoxSelectButton(
+            label = if (globalDefault) "Default (On)" else "Default (Off)",
+            selected = mode == WidgetDismissMode.DEFAULT,
+        ) { onModeChange(WidgetDismissMode.DEFAULT) }
+        ScrollBoxSelectButton("Always", mode == WidgetDismissMode.ALWAYS) {
+            onModeChange(WidgetDismissMode.ALWAYS)
+        }
+        ScrollBoxSelectButton("Never", mode == WidgetDismissMode.NEVER) {
+            onModeChange(WidgetDismissMode.NEVER)
+        }
+    }
+    Text(
+        "Tapping a button or row inside the widget closes the overlay. Scrolling doesn't.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** Toggle-style OutlinedButton used by the scrollbox inspector for direction / edge selection. */

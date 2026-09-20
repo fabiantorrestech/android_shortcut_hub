@@ -423,6 +423,22 @@ internal sealed class TileInsertionEvent {
     ) : TileInsertionEvent()
 }
 
+/**
+ * Whether interacting with a widget should dismiss the overlay.
+ *
+ * [DEFAULT] defers to the app-level `dismissOnWidgetActivity` setting, so a user can flip the
+ * behavior for every widget at once and still pin individual widgets either way.
+ */
+internal enum class WidgetDismissMode { DEFAULT, ALWAYS, NEVER }
+
+/** Resolves this widget's [WidgetDismissMode] against the app-level setting. */
+internal fun WidgetTileState.shouldDismissOnActivity(globalDefault: Boolean): Boolean =
+    when (dismissOnActivity) {
+        WidgetDismissMode.ALWAYS -> true
+        WidgetDismissMode.NEVER -> false
+        WidgetDismissMode.DEFAULT -> globalDefault
+    }
+
 internal data class WidgetTileState(
     override val id: Int,
     override val row: Int,
@@ -432,6 +448,7 @@ internal data class WidgetTileState(
     val appWidgetId: Int,
     val providerComponent: String,
     override val customLabel: String? = null,
+    val dismissOnActivity: WidgetDismissMode = WidgetDismissMode.DEFAULT,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null
@@ -523,6 +540,7 @@ internal data class OverlayUiState(
     val overlayBackgroundAlpha: Float = 0.33f,
     val showOverLockscreen: Boolean = false,
     val launchAnimationEnabled: Boolean = true,
+    val dismissOnWidgetActivity: Boolean = false,
 )
 
 internal data class OverlayOrientationLayout(
@@ -559,6 +577,7 @@ internal fun OverlayOrientationLayout.mergeWithConfig(config: ShortcutHubConfig)
     overlayBackgroundAlpha = config.overlayBackgroundAlpha,
     showOverLockscreen = config.showOverLockscreen,
     launchAnimationEnabled = config.launchAnimationEnabled,
+    dismissOnWidgetActivity = config.dismissOnWidgetActivity,
 )
 
 internal fun OverlayUiState.extractLayout(): OverlayOrientationLayout = OverlayOrientationLayout(
@@ -941,7 +960,8 @@ internal fun OverlayContent(
         val hasVolumeSlider = tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
         val hasBrightnessSlider = tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
         context.startActivity(
-            BindWidgetActivity.createIntent(context, gridRows, gridColumns, hasVolumeSlider, hasBrightnessSlider),
+            // Launched from the overlay (Service context) → must start a new task.
+            BindWidgetActivity.createIntent(context, gridRows, gridColumns, hasVolumeSlider, hasBrightnessSlider, newTask = true),
         )
     }
 
@@ -1342,8 +1362,15 @@ internal fun OverlayContent(
                         sheetVisible = true
                     },
                     modifier = Modifier.fillMaxSize(),
+                    onActivated = if (tile.shouldDismissOnActivity(initialState.dismissOnWidgetActivity)) {
+                        { requestDismiss() }
+                    } else {
+                        null
+                    },
                 )
             },
+            dismissOnWidgetActivity = initialState.dismissOnWidgetActivity,
+            onWidgetActivated = { requestDismiss() },
         )
 
         // D-pad

@@ -108,9 +108,13 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             toggleRequests.collect { toggleOverlay() }
         }
         // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
+        // Guarded: this is only an optimisation, but an uncaught throw here kills the process, and
+        // Android immediately rebinds the crashed accessibility service — a permanent crash loop.
         serviceScope.launch(Dispatchers.IO) {
-            val (portrait, landscape) = OverlayStateRepository.loadBoth(this@ShortcutHubAccessibilityService)
-            OverlayRuntimeCache.preloadFonts(portrait, landscape, ::loadFontFamily)
+            runCatching {
+                val (portrait, landscape) = OverlayStateRepository.loadBoth(this@ShortcutHubAccessibilityService)
+                OverlayRuntimeCache.preloadFonts(portrait, landscape, ::loadFontFamily)
+            }.onFailure { Log.e(TAG, "Overlay pre-warm failed", it) }
         }
     }
 

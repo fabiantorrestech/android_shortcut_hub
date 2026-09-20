@@ -1,5 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.appwidget.AppWidgetManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
@@ -36,11 +37,12 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,8 +53,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -63,7 +63,7 @@ import kotlinx.coroutines.flow.collectLatest
  * 1. Scrollable action bar — "+ App", "+ Widget", "+ Intent", "+ Volume Slider", "+ Brightness Slider"
  * 2. Tile inspector (scrollable, weight 1f) — shown when a tile is selected
  * 3. Grid preview (dark bg, weight 1.2f) — EditorPreview mode
- * 4. Save / Discard bar
+ * 4. Save bar (per-tile Cancel appears when the selected tile has unsaved edits)
  */
 @Composable
 internal fun OverlayEditorScreen(
@@ -71,7 +71,6 @@ internal fun OverlayEditorScreen(
     landscapeEditorState: OverlayEditorState,
     onBack: () -> Unit,
     onSave: (portrait: OverlayUiState, landscape: OverlayUiState) -> Unit,
-    onDiscard: () -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
     openDefaultFontPicker: () -> Unit,
@@ -138,88 +137,142 @@ internal fun OverlayEditorScreen(
     var existingOtherAppWidgetId by remember { mutableStateOf<Int?>(null) }
     var showWidgetShareInfo by remember { mutableStateOf(false) }
 
-    // Stable references that always point to the latest editor states, safe to use inside DisposableEffect
+    // Stable references that always point to the latest editor states, used by the bind-result callback
     val latestActiveState = rememberUpdatedState(editorState)
     val latestOtherState = rememberUpdatedState(
         if (activeTab == OverlayOrientation.PORTRAIT) landscapeEditorState else portraitEditorState,
     )
 
-    // Listen for ON_RESUME to consume any pending widget insertion
-    DisposableEffect(activity) {
-        val lifecycle = activity?.lifecycle ?: return@DisposableEffect onDispose {}
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val insertion = WidgetBindingCoordinator.consumeCompletedInsertion() ?: return@LifecycleEventObserver
-                val active = latestActiveState.value
-                val other = latestOtherState.value
-                when (insertion) {
-                    is TileInsertionEvent.WidgetAdded -> {
-                        val cell = active.findFirstOpenCell(2, 2)
-                        if (cell == null) {
-                            Toast.makeText(context, "No space on grid for this widget", Toast.LENGTH_SHORT).show()
-                            ShortcutHubWidgetHost.getInstance(context).deleteAppWidgetId(insertion.selection.appWidgetId)
-                            return@LifecycleEventObserver
-                        }
-                        // Check if the other orientation already has this provider
-                        val matchingOtherWidget = other.tiles
-                            .filterIsInstance<WidgetTileState>()
-                            .firstOrNull { it.providerComponent == insertion.selection.providerComponent }
-                        if (matchingOtherWidget != null) {
-                            // Prompt the user to choose shared vs independent
-                            pendingWidgetInsertion = insertion
-                            existingOtherAppWidgetId = matchingOtherWidget.appWidgetId
-                        } else {
-                            // No matching widget in the other layout — place independently
-                            val newId = active.nextTileId++
-                            active.addTile(
-                                WidgetTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    rowSpan = 2,
-                                    columnSpan = 2,
-                                    appWidgetId = insertion.selection.appWidgetId,
-                                    providerComponent = insertion.selection.providerComponent,
-                                ),
-                            )
-                            active.selectedTileId = newId
-                        }
-                    }
-                    is TileInsertionEvent.SystemSliderAdded -> {
-                        val alreadyExists = active.tiles.any {
-                            it is SystemSliderTileState && it.config.sliderType == insertion.config.sliderType
-                        }
-                        if (alreadyExists) {
-                            Toast.makeText(
-                                context,
-                                "A ${insertion.config.sliderType.name.lowercase()} slider is already on the grid",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                            return@LifecycleEventObserver
-                        }
-                        val cell = active.findFirstOpenCell(insertion.rowSpan, insertion.columnSpan)
-                        if (cell == null) {
-                            Toast.makeText(context, "No space on grid for this slider", Toast.LENGTH_SHORT).show()
-                            return@LifecycleEventObserver
-                        }
-                        val newId = active.nextTileId++
-                        active.addTile(
-                            SystemSliderTileState(
-                                id = newId,
-                                row = cell.first,
-                                column = cell.second,
-                                rowSpan = insertion.rowSpan,
-                                columnSpan = insertion.columnSpan,
-                                config = insertion.config,
-                            ),
-                        )
-                        active.selectedTileId = newId
-                    }
+    // Screen dimensions the ACTIVE layout will actually be drawn at. The editor can be held in
+    // either physical orientation while editing either tab, so normalise rather than trusting the
+    // live configuration: portrait = short side wide, landscape = long side wide.
+    val configuration = LocalConfiguration.current
+    val shortSideDp = minOf(configuration.screenWidthDp, configuration.screenHeightDp)
+    val longSideDp = maxOf(configuration.screenWidthDp, configuration.screenHeightDp)
+    val latestTargetScreen = rememberUpdatedState(
+        if (activeTab == OverlayOrientation.PORTRAIT) shortSideDp to longSideDp else longSideDp to shortSideDp,
+    )
+
+    /**
+     * Footprint a freshly bound widget should get: derived from the provider's declared minimum
+     * size against the active grid, exactly like the runtime overlay does. Falls back to 2×2 when
+     * the provider can't be resolved.
+     */
+    fun nativeSpanFor(appWidgetId: Int, state: OverlayEditorState): Pair<Int, Int> {
+        val info = AppWidgetManager.getInstance(context).getAppWidgetInfo(appWidgetId) ?: return 2 to 2
+        val (screenWidthDp, screenHeightDp) = latestTargetScreen.value
+        return resolveWidgetSpanForGrid(
+            minWidthDp = info.minWidth,
+            minHeightDp = info.minHeight,
+            screenWidthDp = screenWidthDp,
+            screenHeightDp = screenHeightDp,
+            gridRows = state.gridRows,
+            gridColumns = state.gridColumns,
+        )
+    }
+
+    // Deterministic result delivery for widget/slider binds — fires exactly when BindWidgetActivity
+    // finishes (no matter how many config screens it launched internally) and only for the launch we
+    // started. The typed insertion is read from the coordinator.
+    fun consumeWidgetBindResult() {
+        val insertion = WidgetBindingCoordinator.consumeCompletedInsertion()
+        if (insertion == null) {
+            android.util.Log.d(WIDGET_BIND_TAG, "editor.consumeWidgetBindResult -> nothing pending, no tile added")
+            return
+        }
+        val active = latestActiveState.value
+        val other = latestOtherState.value
+        android.util.Log.d(
+            WIDGET_BIND_TAG,
+            "editor.consumeWidgetBindResult insertion=$insertion activeTiles=${active.tiles.size} " +
+                "grid=${active.gridRows}x${active.gridColumns}",
+        )
+        when (insertion) {
+            is TileInsertionEvent.WidgetAdded -> {
+                val (nativeRows, nativeCols) = nativeSpanFor(insertion.selection.appWidgetId, active)
+                val placement = active.findWidgetPlacement(nativeRows, nativeCols)
+                android.util.Log.d(
+                    WIDGET_BIND_TAG,
+                    "editor.findWidgetPlacement nativeSpan=${nativeRows}x$nativeCols -> $placement",
+                )
+                if (placement == null) {
+                    Toast.makeText(context, "No space on grid for this widget", Toast.LENGTH_SHORT).show()
+                    ShortcutHubWidgetHost.getInstance(context).deleteAppWidgetId(insertion.selection.appWidgetId)
+                    return
+                }
+                // Check if the other orientation already has this provider
+                val matchingOtherWidget = other.tiles
+                    .filterIsInstance<WidgetTileState>()
+                    .firstOrNull { it.providerComponent == insertion.selection.providerComponent }
+                if (matchingOtherWidget != null) {
+                    // Prompt the user to choose shared vs independent
+                    android.util.Log.d(
+                        WIDGET_BIND_TAG,
+                        "editor: same provider exists in other orientation (id=${matchingOtherWidget.appWidgetId}) " +
+                            "-> showing shared/independent dialog instead of placing",
+                    )
+                    pendingWidgetInsertion = insertion
+                    existingOtherAppWidgetId = matchingOtherWidget.appWidgetId
+                } else {
+                    // No matching widget in the other layout — place independently
+                    val (cell, rowSpan, colSpan) = placement
+                    val newId = active.nextTileId++
+                    active.addTile(
+                        WidgetTileState(
+                            id = newId,
+                            row = cell.first,
+                            column = cell.second,
+                            rowSpan = rowSpan,
+                            columnSpan = colSpan,
+                            appWidgetId = insertion.selection.appWidgetId,
+                            providerComponent = insertion.selection.providerComponent,
+                        ),
+                    )
+                    active.selectedTileId = newId
+                    android.util.Log.d(
+                        WIDGET_BIND_TAG,
+                        "editor: placed widget tile id=$newId at (${cell.first},${cell.second}) span=${rowSpan}x$colSpan",
+                    )
                 }
             }
+            is TileInsertionEvent.SystemSliderAdded -> {
+                val alreadyExists = active.tiles.any {
+                    it is SystemSliderTileState && it.config.sliderType == insertion.config.sliderType
+                }
+                if (alreadyExists) {
+                    Toast.makeText(
+                        context,
+                        "A ${insertion.config.sliderType.name.lowercase()} slider is already on the grid",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return
+                }
+                val cell = active.findFirstOpenCell(insertion.rowSpan, insertion.columnSpan)
+                if (cell == null) {
+                    Toast.makeText(context, "No space on grid for this slider", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val newId = active.nextTileId++
+                active.addTile(
+                    SystemSliderTileState(
+                        id = newId,
+                        row = cell.first,
+                        column = cell.second,
+                        rowSpan = insertion.rowSpan,
+                        columnSpan = insertion.columnSpan,
+                        config = insertion.config,
+                    ),
+                )
+                active.selectedTileId = newId
+            }
         }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    val widgetLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        android.util.Log.d(WIDGET_BIND_TAG, "editor.widgetLauncher callback fired, resultCode=${result.resultCode}")
+        consumeWidgetBindResult()
     }
 
     // Widget shared/independent dialog
@@ -228,15 +281,16 @@ internal fun OverlayEditorScreen(
         val otherWidgetId = existingOtherAppWidgetId
 
         fun placeWidget(appWidgetId: Int) {
-            val cell = editorState.findFirstOpenCell(2, 2) ?: return
+            val (nativeRows, nativeCols) = nativeSpanFor(appWidgetId, editorState)
+            val (cell, rowSpan, colSpan) = editorState.findWidgetPlacement(nativeRows, nativeCols) ?: return
             val newId = editorState.nextTileId++
             editorState.addTile(
                 WidgetTileState(
                     id = newId,
                     row = cell.first,
                     column = cell.second,
-                    rowSpan = 2,
-                    columnSpan = 2,
+                    rowSpan = rowSpan,
+                    columnSpan = colSpan,
                     appWidgetId = appWidgetId,
                     providerComponent = pendingWidget.selection.providerComponent,
                 ),
@@ -303,9 +357,9 @@ internal fun OverlayEditorScreen(
         )
     }
 
-    val configuration = LocalConfiguration.current
-    val shortSide = minOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
-    val longSide = maxOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat()
+    // `configuration` is declared above, alongside the widget-span helpers.
+    val shortSide = shortSideDp.toFloat()
+    val longSide = longSideDp.toFloat()
     val deviceAspectRatio = if (activeTab == OverlayOrientation.LANDSCAPE)
         longSide / shortSide
     else
@@ -334,16 +388,14 @@ internal fun OverlayEditorScreen(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
-            if (editorState.hasUnsavedChanges) {
-                Text(
-                    text = "Unsaved changes",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                )
-            } else {
-                Box(modifier = Modifier.weight(1f))
-            }
+            val anyUnsaved = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges
+            Text(
+                text = if (anyUnsaved) "Unsaved changes" else "All changes saved",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (anyUnsaved) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+            )
             // Appearance popup
             Box {
                 IconButton(onClick = { appearancePopupOpen = true }) {
@@ -476,8 +528,9 @@ internal fun OverlayEditorScreen(
                         OutlinedButton(onClick = {
                             val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
                             val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
+                            android.util.Log.d(WIDGET_BIND_TAG, "editor: '+ Widget' tapped (portrait/landscape bar)")
                             WidgetBindingCoordinator.startBinding()
-                            context.startActivity(
+                            widgetLauncher.launch(
                                 BindWidgetActivity.createIntent(
                                     context,
                                     editorState.gridRows,
@@ -551,7 +604,9 @@ internal fun OverlayEditorScreen(
                                 ),
                             )
                             editorState.selectedTileId = newId
-                            editingWidgetStackId = newId
+                            // Do NOT auto-open the widget editor — leave the stack placed + selected so
+                            // the user can size/move it on the grid first, then tap "Edit stack ›" to
+                            // add widgets (consistent with Scrollbox).
                         }) { Text("+ Widget Stack") }
 
                         OutlinedButton(onClick = {
@@ -645,21 +700,25 @@ internal fun OverlayEditorScreen(
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            val selectedId = editorState.selectedTileId
+                            if (selectedId != null && editorState.isTileDirty(selectedId)) {
+                                OutlinedButton(
+                                    onClick = { editorState.revertTile(selectedId) },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Cancel") }
+                            }
                             Button(
                                 onClick = {
                                     syncGlobalsFromActive()
-                                    onSave(portraitEditorState.commit(), landscapeEditorState.commit())
+                                    val portraitCommitted = portraitEditorState.commit()
+                                    val landscapeCommitted = landscapeEditorState.commit()
+                                    onSave(portraitCommitted, landscapeCommitted)
+                                    portraitEditorState.markSaved(portraitCommitted)
+                                    landscapeEditorState.markSaved(landscapeCommitted)
                                 },
+                                enabled = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges,
                                 modifier = Modifier.weight(1f),
                             ) { Text("Save") }
-                            OutlinedButton(
-                                onClick = {
-                                    portraitEditorState.reset()
-                                    landscapeEditorState.reset()
-                                    onDiscard()
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Discard") }
                         }
                     }
                 }
@@ -765,8 +824,9 @@ internal fun OverlayEditorScreen(
                 OutlinedButton(onClick = {
                     val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
                     val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
+                    android.util.Log.d(WIDGET_BIND_TAG, "editor: '+ Widget' tapped (alt bar)")
                     WidgetBindingCoordinator.startBinding()
-                    context.startActivity(
+                    widgetLauncher.launch(
                         BindWidgetActivity.createIntent(
                             context,
                             editorState.gridRows,
@@ -843,7 +903,8 @@ internal fun OverlayEditorScreen(
                         ),
                     )
                     editorState.selectedTileId = newId
-                    editingWidgetStackId = newId
+                    // Do NOT auto-open the widget editor — size/move on the grid first, then
+                    // tap "Edit stack ›" to add widgets (consistent with Scrollbox).
                 }) { Text("+ Widget Stack") }
 
                 // + Volume Slider
@@ -939,21 +1000,25 @@ internal fun OverlayEditorScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    val selectedId = editorState.selectedTileId
+                    if (selectedId != null && editorState.isTileDirty(selectedId)) {
+                        OutlinedButton(
+                            onClick = { editorState.revertTile(selectedId) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Cancel") }
+                    }
                     Button(
                         onClick = {
                             syncGlobalsFromActive()
-                            onSave(portraitEditorState.commit(), landscapeEditorState.commit())
+                            val portraitCommitted = portraitEditorState.commit()
+                            val landscapeCommitted = landscapeEditorState.commit()
+                            onSave(portraitCommitted, landscapeCommitted)
+                            portraitEditorState.markSaved(portraitCommitted)
+                            landscapeEditorState.markSaved(landscapeCommitted)
                         },
+                        enabled = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges,
                         modifier = Modifier.weight(1f),
                     ) { Text("Save") }
-                    OutlinedButton(
-                        onClick = {
-                            portraitEditorState.reset()
-                            landscapeEditorState.reset()
-                            onDiscard()
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Discard") }
                 }
             }
         }

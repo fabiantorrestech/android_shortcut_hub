@@ -2,6 +2,8 @@ package com.fabiantorrestech.androidshortcuthub
 
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
 import android.media.AudioManager
 import android.os.Build
 import android.view.View
@@ -54,6 +56,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,6 +73,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -118,6 +123,8 @@ internal fun OverlayGridPreview(
     onTileLongPress: (TileState) -> Unit = {},
     onSliderBoundsChanged: (Int, Rect) -> Unit = { _, _ -> },
     widgetContent: @Composable BoxScope.(WidgetTileState) -> Unit = {},
+    dismissOnWidgetActivity: Boolean = false,
+    onWidgetActivated: (() -> Unit)? = null,
 ) {
     val view = LocalView.current
 
@@ -409,6 +416,8 @@ internal fun OverlayGridPreview(
                                                 hapticFeedbackEnabled = hapticFeedbackEnabled,
                                                 onStackLongPress = { onTileLongPress(tile) },
                                                 modifier = Modifier.fillMaxSize(),
+                                                dismissOnWidgetActivity = dismissOnWidgetActivity,
+                                                onWidgetActivated = onWidgetActivated,
                                             )
                                         }
                                     }
@@ -559,12 +568,49 @@ internal fun OverlayGridPreview(
     }
 }
 
+/** Display label + install state for a widget tile, resolved live (no persisted field). */
+internal data class WidgetLabelInfo(val text: String, val providerInstalled: Boolean)
+
 /**
- * Placeholder shown for widget tiles in EditorPreview mode where real widgets cannot be rendered.
+ * Builds a friendly "AppName - WidgetProviderName" label for a widget tile. [available] is the
+ * caller's known `getAppWidgetInfo(id) != null`; when false, install state is confirmed via
+ * [AppWidgetManager.installedProviders] (host-visible, so it stays correct even when package
+ * visibility would block getApplicationInfo). The app name degrades to the package name when its
+ * label can't be resolved — that never implies "(MISSING)". A provider that is not installed is
+ * marked "(MISSING)".
+ */
+internal fun widgetProviderLabel(
+    context: Context,
+    providerComponent: String,
+    available: Boolean,
+): WidgetLabelInfo {
+    val component = ComponentName.unflattenFromString(providerComponent)
+    val widgetShortName = (component?.className ?: providerComponent).substringAfterLast('.')
+    val pkg = component?.packageName
+    val providerInstalled = available || (
+        component != null &&
+            AppWidgetManager.getInstance(context).installedProviders.any { it.provider == component }
+        )
+    val pm = context.packageManager
+    val appName = pkg?.let {
+        runCatching { pm.getApplicationLabel(pm.getApplicationInfo(it, 0)).toString() }
+            .getOrNull()?.takeIf { s -> s.isNotBlank() }
+    } ?: pkg ?: "?"
+    val text = if (providerInstalled) "$appName - $widgetShortName"
+    else "$appName (MISSING) - $widgetShortName"
+    return WidgetLabelInfo(text, providerInstalled)
+}
+
+/**
+ * Placeholder shown for widget tiles where a real widget cannot be rendered (EditorPreview, or a
+ * broken/unavailable binding at runtime).
  */
 @Composable
 internal fun WidgetPlaceholder(tile: WidgetTileState, modifier: Modifier = Modifier) {
-    val providerShortName = tile.providerComponent.substringAfterLast(".")
+    val context = LocalContext.current
+    val label = remember(tile.providerComponent) {
+        widgetProviderLabel(context, tile.providerComponent, available = false)
+    }
     Box(
         modifier = modifier
             .background(
@@ -595,10 +641,12 @@ internal fun WidgetPlaceholder(tile: WidgetTileState, modifier: Modifier = Modif
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                text = providerShortName,
+                text = label.text,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                maxLines = 1,
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -819,6 +867,7 @@ internal fun WidgetHostView(
     hapticFeedbackEnabled: Boolean,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
+    onActivated: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -827,14 +876,23 @@ internal fun WidgetHostView(
         appWidgetManager.getAppWidgetInfo(tile.appWidgetId)
     }
     if (providerInfo != null) {
+        // WidgetViewCache keeps host views alive for the process lifetime, so an activation callback
+        // left on one would retain this composition after the overlay is dismissed. Track the view
+        // and clear the callback on dispose.
+        val attachedHost = remember { mutableStateOf<ZeroPaddingWidgetHostView?>(null) }
+        DisposableEffect(Unit) {
+            onDispose { attachedHost.value?.onWidgetActivated = null }
+        }
         AndroidView(
             factory = {
                 WidgetViewCache.getOrCreate(context, tile.appWidgetId, providerInfo).also {
-                    configureWidgetHostView(it, interactive, hapticFeedbackEnabled, view, onLongPress)
+                    attachedHost.value = it as? ZeroPaddingWidgetHostView
+                    configureWidgetHostView(it, interactive, hapticFeedbackEnabled, view, onLongPress, onActivated)
                 }
             },
             update = { hostView ->
-                configureWidgetHostView(hostView, interactive, hapticFeedbackEnabled, view, onLongPress)
+                attachedHost.value = hostView as? ZeroPaddingWidgetHostView
+                configureWidgetHostView(hostView, interactive, hapticFeedbackEnabled, view, onLongPress, onActivated)
             },
             modifier = modifier,
         )
@@ -849,6 +907,7 @@ private fun configureWidgetHostView(
     hapticFeedbackEnabled: Boolean,
     view: View,
     onLongPress: () -> Unit,
+    onActivated: (() -> Unit)?,
 ) {
     hostView.isLongClickable = interactive
     hostView.setOnLongClickListener(
@@ -864,6 +923,10 @@ private fun configureWidgetHostView(
     )
     hostView.isClickable = interactive
     hostView.isEnabled = interactive
+    // Null disables tap detection entirely (editor preview, move mode, or a widget whose
+    // effective dismiss mode is off), so no touch bookkeeping runs for it.
+    (hostView as? ZeroPaddingWidgetHostView)?.onWidgetActivated =
+        if (interactive) onActivated else null
 }
 
 /**
@@ -924,6 +987,8 @@ internal fun WidgetStackRuntimeContent(
     hapticFeedbackEnabled: Boolean,
     onStackLongPress: () -> Unit,
     modifier: Modifier = Modifier,
+    dismissOnWidgetActivity: Boolean = false,
+    onWidgetActivated: (() -> Unit)? = null,
 ) {
     val widgets = tile.widgets
     if (widgets.isEmpty()) {
@@ -959,6 +1024,8 @@ internal fun WidgetStackRuntimeContent(
                 hapticFeedbackEnabled = hapticFeedbackEnabled,
                 onLongPress = onStackLongPress,
                 modifier = Modifier.fillMaxSize(),
+                onActivated = onWidgetActivated
+                    ?.takeIf { widgets[page].shouldDismissOnActivity(dismissOnWidgetActivity) },
             )
         }
         if (tile.showPageIndicator && widgets.size > 1) {

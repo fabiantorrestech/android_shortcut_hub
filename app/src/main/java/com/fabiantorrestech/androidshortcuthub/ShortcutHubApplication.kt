@@ -127,16 +127,21 @@ class ShortcutHubApplication : Application() {
         if (!config.useAccessibilityService && ShortcutHubOverlayService.canDrawOverlays(this)) {
             ShortcutHubOverlayService.prewarm(this)
             // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
+            // Guarded: SupervisorJob does NOT stop an uncaught exception in a launch{} from
+            // reaching the default handler, so an unreadable layout here would crash the app on
+            // every launch (warmOverlayServiceIfEligible runs from MainActivity.onResume).
             appScope.launch {
-                val (portrait, landscape) = OverlayStateRepository.loadBoth(applicationContext)
-                OverlayRuntimeCache.preloadFonts(portrait, landscape) { uriString ->
-                    val parsedUri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return@preloadFonts null
-                    runCatching {
-                        contentResolver.openFileDescriptor(parsedUri, "r")?.use { descriptor ->
-                            FontFamily(Typeface.Builder(descriptor.fileDescriptor).build())
-                        }
-                    }.getOrNull()
-                }
+                runCatching {
+                    val (portrait, landscape) = OverlayStateRepository.loadBoth(applicationContext)
+                    OverlayRuntimeCache.preloadFonts(portrait, landscape) { uriString ->
+                        val parsedUri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return@preloadFonts null
+                        runCatching {
+                            contentResolver.openFileDescriptor(parsedUri, "r")?.use { descriptor ->
+                                FontFamily(Typeface.Builder(descriptor.fileDescriptor).build())
+                            }
+                        }.getOrNull()
+                    }
+                }.onFailure { Log.e(TAG, "Overlay pre-warm failed", it) }
             }
         }
     }

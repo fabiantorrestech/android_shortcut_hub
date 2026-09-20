@@ -124,8 +124,10 @@ internal object OverlayStateRepository {
             root.optJSONObject("landscape")?.let { parseTilesAndOffsets(it, config) }
         }
 
-        // Persist migration if needed (raw was null or v1)
-        if (raw == null || !JSONObject(raw).has("version")) {
+        // Persist migration if needed (raw was null, v1, or unparseable — parseV2Root already
+        // fell back to a default layout in that last case, so re-parsing here must not throw).
+        val rawIsAlreadyV2 = raw != null && runCatching { JSONObject(raw).has("version") }.getOrDefault(false)
+        if (!rawIsAlreadyV2) {
             val migrated = root.toString()
             prefs.edit().putString(OVERLAY_PREFS_KEY_STATE, migrated).apply()
             OverlayRuntimeCache.updateLayouts(migrated, portraitLayout, landscapeLayout)
@@ -185,6 +187,7 @@ internal object OverlayStateRepository {
                 put("type", TILE_TYPE_WIDGET)
                 put("appWidgetId", tile.appWidgetId)
                 put("providerComponent", tile.providerComponent)
+                put("dismissOnActivity", tile.dismissOnActivity.name)
             }
             is SystemSliderTileState -> {
                 put("type", TILE_TYPE_SYSTEM_SLIDER)
@@ -264,7 +267,10 @@ internal object OverlayStateRepository {
                 val appWidgetId = item.optInt("appWidgetId", -1)
                 val providerComponent = item.optString("providerComponent").takeIf { it.isNotBlank() }
                 if (appWidgetId < 0 || providerComponent == null) return null
-                WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel)
+                val dismissOnActivity = WidgetDismissMode.entries
+                    .firstOrNull { it.name == item.optString("dismissOnActivity") }
+                    ?: WidgetDismissMode.DEFAULT
+                WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel, dismissOnActivity)
             }
             TILE_TYPE_SYSTEM_SLIDER -> {
                 val sliderType = SliderType.entries.firstOrNull { it.name == item.optString("sliderType") } ?: return null
@@ -314,12 +320,17 @@ internal object OverlayStateRepository {
                 val autoRotateSeconds = item.optInt("autoRotateSeconds", 8).coerceIn(3, 60)
                 WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel)
             }
-            else -> {
+            TILE_TYPE_APP -> {
+                val label = item.optString("label").takeIf { it.isNotBlank() } ?: return null
                 val component = item.optString("component").takeIf { it.isNotBlank() }?.let(ComponentName::unflattenFromString)
                 val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
                 val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
-                AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(item.getString("label"), component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText)
+                AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(label, component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText)
             }
+            // An unrecognised type used to land in the app branch and blow up on getString("label").
+            // Skip it instead, per this function's contract. Legacy v1 tiles are unaffected: the
+            // `type` lookup above already defaults a missing type to TILE_TYPE_APP.
+            else -> null
         }
     }
 
@@ -332,7 +343,11 @@ internal object OverlayStateRepository {
         val tilesArray = layoutObj.optJSONArray("tiles") ?: JSONArray()
         val tiles = buildList<TileState> {
             for (i in 0 until tilesArray.length()) {
-                val tile = parseTile(tilesArray.getJSONObject(i)) ?: continue
+                // Guarded like the nested scrollbox/widget-stack children below: one malformed tile
+                // must not abort the whole load. Unguarded, the exception escapes loadBoth() into
+                // the services' pre-warm coroutines and kills the process — and because Android
+                // auto-rebinds a crashed accessibility service, that becomes a crash LOOP.
+                val tile = runCatching { parseTile(tilesArray.getJSONObject(i)) }.getOrNull() ?: continue
                 add(tile)
             }
         }.filter { tile ->

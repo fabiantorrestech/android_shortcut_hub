@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.OnBackPressedCallback
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.lifecycle.lifecycleScope
@@ -62,8 +63,21 @@ class LockscreenOverlayActivity : ComponentActivity() {
         setTurnScreenOn(true)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
-        registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
-        registerReceiver(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
+        // ACTION_CLOSE_SYSTEM_DIALOGS is not treated as an exclusively-system broadcast, so on
+        // Android 14+ (targetSdk 36) a bare registerReceiver here throws SecurityException and
+        // takes the activity down in onCreate.
+        ContextCompat.registerReceiver(
+            this,
+            screenOffReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            this,
+            systemUiDismissReceiver,
+            IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         onBackPressedDispatcher.addCallback(
             this,
             object : OnBackPressedCallback(true) {

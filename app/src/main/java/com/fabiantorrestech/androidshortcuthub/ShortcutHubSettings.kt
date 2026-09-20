@@ -22,6 +22,7 @@ private const val KEY_DISMISS_ACCESSIBILITY_BANNER = "dismiss_accessibility_bann
 private const val KEY_USE_ACCESSIBILITY_SERVICE = "use_accessibility_service"
 private const val KEY_DISMISS_ON_SCREEN_OFF = "dismiss_on_screen_off"
 private const val KEY_LAUNCH_ANIMATION_ENABLED = "launch_animation_enabled"
+private const val KEY_DISMISS_ON_WIDGET_ACTIVITY = "dismiss_on_widget_activity"
 
 enum class DefaultTextColorMode {
     SYSTEM,
@@ -48,6 +49,8 @@ data class ShortcutHubConfig(
     val useAccessibilityService: Boolean = false,
     val dismissOnScreenOff: Boolean = true,
     val launchAnimationEnabled: Boolean = true,
+    /** Dismiss the overlay when a widget tap activates something. Off = current behavior. */
+    val dismissOnWidgetActivity: Boolean = false,
 )
 
 object ShortcutHubSettings {
@@ -76,6 +79,7 @@ object ShortcutHubSettings {
             useAccessibilityService = prefs.getBoolean(KEY_USE_ACCESSIBILITY_SERVICE, false),
             dismissOnScreenOff = prefs.getBoolean(KEY_DISMISS_ON_SCREEN_OFF, true),
             launchAnimationEnabled = prefs.getBoolean(KEY_LAUNCH_ANIMATION_ENABLED, true),
+            dismissOnWidgetActivity = prefs.getBoolean(KEY_DISMISS_ON_WIDGET_ACTIVITY, false),
         )
     }
 
@@ -99,6 +103,7 @@ object ShortcutHubSettings {
             .putBoolean(KEY_USE_ACCESSIBILITY_SERVICE, config.useAccessibilityService)
             .putBoolean(KEY_DISMISS_ON_SCREEN_OFF, config.dismissOnScreenOff)
             .putBoolean(KEY_LAUNCH_ANIMATION_ENABLED, config.launchAnimationEnabled)
+            .putBoolean(KEY_DISMISS_ON_WIDGET_ACTIVITY, config.dismissOnWidgetActivity)
             .apply()
     }
 

@@ -85,6 +85,7 @@ object BackupManager {
             put("dismissAccessibilityBanner", config.dismissAccessibilityBanner)
             put("useAccessibilityService", config.useAccessibilityService)
             put("dismissOnScreenOff", config.dismissOnScreenOff)
+            put("dismissOnWidgetActivity", config.dismissOnWidgetActivity)
         }
 
         val layoutJson = layoutRaw
@@ -136,6 +137,7 @@ object BackupManager {
                 dismissAccessibilityBanner = s.optBoolean("dismissAccessibilityBanner", false),
                 useAccessibilityService = s.optBoolean("useAccessibilityService", false),
                 dismissOnScreenOff = s.optBoolean("dismissOnScreenOff", true),
+                dismissOnWidgetActivity = s.optBoolean("dismissOnWidgetActivity", false),
             )
             ShortcutHubSettings.save(context, config)
 
