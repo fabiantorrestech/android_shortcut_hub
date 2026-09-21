@@ -57,6 +57,7 @@ internal fun OverlayTileInspector(
     editorState: OverlayEditorState,
     onConfigureWidget: (appWidgetId: Int) -> Unit,
     onPickApp: (tileId: Int) -> Unit,
+    onPickMaterialIcon: (tileId: Int) -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
     fontEvents: Flow<TileFontSelection>,
@@ -217,6 +218,7 @@ internal fun OverlayTileInspector(
                     tile = tile,
                     editorState = editorState,
                     onPickApp = onPickApp,
+                    onPickMaterialIcon = onPickMaterialIcon,
                     openFontPicker = openFontPicker,
                     openIconPicker = openIconPicker,
                 )
@@ -452,10 +454,10 @@ private fun AppTileInspectorControls(
     tile: AppTileState,
     editorState: OverlayEditorState,
     onPickApp: (tileId: Int) -> Unit,
+    onPickMaterialIcon: (tileId: Int) -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
 ) {
-    var showMaterialIconPicker by remember { mutableStateOf(false) }
 
     OutlinedButton(
         onClick = { onPickApp(tile.id) },
@@ -492,26 +494,9 @@ private fun AppTileInspectorControls(
             }
         },
         onPickCustomIcon = { openIconPicker(tile.id) },
-        onChooseMaterialIcon = { showMaterialIconPicker = true },
+        onChooseMaterialIcon = { onPickMaterialIcon(tile.id) },
     )
 
-    if (showMaterialIconPicker) {
-        InlineMaterialIconPicker(
-            currentKey = tile.iconConfig.materialIconKey,
-            onPick = { key ->
-                editorState.updateTile(tile.id) { t ->
-                    (t as AppTileState).copy(
-                        iconConfig = t.iconConfig.copy(
-                            source = AppTileIconSource.MATERIAL,
-                            materialIconKey = key,
-                        ),
-                    )
-                }
-                showMaterialIconPicker = false
-            },
-            onDismiss = { showMaterialIconPicker = false },
-        )
-    }
 }
 
 // ── Intent tile sub-inspector ────────────────────────────────────────────────
@@ -560,53 +545,6 @@ private fun IntentTileInspectorControls(
     }
 }
 
-// ── Inline material icon picker ───────────────────────────────────────────────
-
-@Composable
-private fun InlineMaterialIconPicker(
-    currentKey: String?,
-    onPick: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    // Back closes the chooser rather than falling through to the editor behind it.
-    BackHandler { onDismiss() }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "Material Icon: ${materialIconForKey(currentKey)?.label ?: "None"}",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(300.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(materialIconOptions, key = { it.key }) { option ->
-                OutlinedButton(
-                    onClick = { onPick(option.key) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Icon(imageVector = option.imageVector, contentDescription = option.label)
-                        Text(
-                            option.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-            }
-        }
-        OutlinedButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Close") }
-    }
-}
 
 // ── Inline app chooser ────────────────────────────────────────────────────────
 

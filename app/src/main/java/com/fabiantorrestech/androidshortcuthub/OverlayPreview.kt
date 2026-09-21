@@ -646,8 +646,12 @@ private fun EditorTileThumbnail(
 ) {
     val context = LocalContext.current
 
-    val appIcon: ImageBitmap? = if (tile is AppTileState) {
-        val packageName = tile.app.packageName
+    // Only the APP and CUSTOM sources fall back to the launcher icon; MATERIAL draws a vector and
+    // NONE draws nothing, so the preview reflects what the tile is actually configured to show.
+    val wantsAppIcon = tile is AppTileState &&
+        (tile.iconConfig.source == AppTileIconSource.APP || tile.iconConfig.source == AppTileIconSource.CUSTOM)
+    val appIcon: ImageBitmap? = if (wantsAppIcon) {
+        val packageName = (tile as AppTileState).app.packageName
         produceState<ImageBitmap?>(initialValue = null, packageName) {
             value = runCatching {
                 withContext(Dispatchers.IO) { loadAppIcon(context, packageName) }
@@ -672,15 +676,27 @@ private fun EditorTileThumbnail(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             when (tile) {
-                is AppTileState -> if (appIcon != null) {
-                    Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.size(22.dp))
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Android,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = defaultTextColor,
-                    )
+                is AppTileState -> when (tile.iconConfig.source) {
+                    AppTileIconSource.NONE -> Unit
+                    AppTileIconSource.MATERIAL -> materialIconForKey(tile.iconConfig.materialIconKey)?.let {
+                        Icon(
+                            imageVector = it.imageVector,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = defaultTextColor,
+                        )
+                    }
+
+                    AppTileIconSource.APP, AppTileIconSource.CUSTOM -> if (appIcon != null) {
+                        Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.size(22.dp))
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Android,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = defaultTextColor,
+                        )
+                    }
                 }
 
                 is IntentTileState -> Icon(
@@ -711,19 +727,27 @@ private fun EditorTileThumbnail(
                 else -> Unit
             }
 
-            Text(
-                text = caption,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = MaterialTheme.typography.labelSmall.fontSize *
-                        (tile.customTextScale ?: defaultTextScale),
-                ),
-                color = defaultTextColor,
-                fontWeight = tile.customBoldText?.let { if (it) FontWeight.Bold else FontWeight.Normal }
-                    ?: defaultFontWeight,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // An app tile with an icon and Show label off draws no label at runtime, so the
+            // preview must not draw one either - otherwise turning the switch off appears to do
+            // nothing here.
+            val drawsLabel = tile !is AppTileState ||
+                tile.iconConfig.source == AppTileIconSource.NONE ||
+                tile.iconConfig.showLabel
+            if (drawsLabel) {
+                Text(
+                    text = caption,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = MaterialTheme.typography.labelSmall.fontSize *
+                            (tile.customTextScale ?: defaultTextScale),
+                    ),
+                    color = defaultTextColor,
+                    fontWeight = tile.customBoldText?.let { if (it) FontWeight.Bold else FontWeight.Normal }
+                        ?: defaultFontWeight,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

@@ -77,13 +77,14 @@ internal fun OverlayEditorScreen(
     var activeTab by remember { mutableStateOf(OverlayOrientation.PORTRAIT) }
     val editorState = if (activeTab == OverlayOrientation.PORTRAIT) portraitEditorState else landscapeEditorState
 
-    // When set, a container editor or the app picker takes over the whole screen (swap, not
-    // overlay), so the shared font/icon pick and widget-bind events route to exactly one consumer.
-    // All three ids are declared before any early-return so their remembered state is always
-    // present, and each swapped-in screen brings its own BackHandler, giving one level of unwind.
+    // When any of these is set, that screen takes over the whole editor (swap, not overlay), so the
+    // shared font/icon pick and widget-bind events route to exactly one consumer. Every id is
+    // declared before the first early-return so its remembered state survives the swap, and each
+    // swapped-in screen brings its own BackHandler, giving exactly one level of unwind per press.
     var editingScrollBoxId by remember { mutableStateOf<Int?>(null) }
     var editingWidgetStackId by remember { mutableStateOf<Int?>(null) }
     var pickingAppForTileId by remember { mutableStateOf<Int?>(null) }
+    var pickingIconForTileId by remember { mutableStateOf<Int?>(null) }
     var showElementList by remember { mutableStateOf(false) }
 
     if (showElementList) {
@@ -100,6 +101,26 @@ internal fun OverlayEditorScreen(
                 pickingAppForTileId = null
             },
             onBack = { pickingAppForTileId = null },
+        )
+        return
+    }
+    val currentPickingIconForTileId = pickingIconForTileId
+    if (currentPickingIconForTileId != null) {
+        val tile = editorState.tiles.firstOrNull { it.id == currentPickingIconForTileId } as? AppTileState
+        IconPickerScreen(
+            currentKey = tile?.iconConfig?.materialIconKey,
+            onPick = { key ->
+                editorState.updateTile(currentPickingIconForTileId) { t ->
+                    (t as? AppTileState)?.copy(
+                        iconConfig = t.iconConfig.copy(
+                            source = AppTileIconSource.MATERIAL,
+                            materialIconKey = key,
+                        ),
+                    ) ?: t
+                }
+                pickingIconForTileId = null
+            },
+            onBack = { pickingIconForTileId = null },
         )
         return
     }
@@ -504,6 +525,7 @@ internal fun OverlayEditorScreen(
                 }
             },
             onPickApp = { pickingAppForTileId = it },
+            onPickMaterialIcon = { pickingIconForTileId = it },
             openFontPicker = openFontPicker,
             openIconPicker = openIconPicker,
             fontEvents = fontEvents,

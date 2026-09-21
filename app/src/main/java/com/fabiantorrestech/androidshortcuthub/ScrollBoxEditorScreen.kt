@@ -76,6 +76,7 @@ internal fun ScrollBoxEditorScreen(
     // Declared before the picker's early return so the id survives the swap, mirroring how
     // OverlayEditorScreen hosts the same picker for top-level tiles.
     var pickingAppForTileId by remember { mutableStateOf<Int?>(null) }
+    var pickingIconForTileId by remember { mutableStateOf<Int?>(null) }
 
     // Scoped editor state for the inner grid — reuses every grid operation OverlayEditorState provides.
     val innerEditorState = remember(scrollBoxId) {
@@ -123,6 +124,27 @@ internal fun ScrollBoxEditorScreen(
 
     // Returns before the BackHandler below, so while the picker is up its own handler is the only
     // one composed and back closes the picker rather than committing and leaving the scrollbox.
+    val currentPickingIconForTileId = pickingIconForTileId
+    if (currentPickingIconForTileId != null) {
+        val child = innerEditorState.tiles.firstOrNull { it.id == currentPickingIconForTileId } as? AppTileState
+        IconPickerScreen(
+            currentKey = child?.iconConfig?.materialIconKey,
+            onPick = { key ->
+                innerEditorState.updateTile(currentPickingIconForTileId) { t ->
+                    (t as? AppTileState)?.copy(
+                        iconConfig = t.iconConfig.copy(
+                            source = AppTileIconSource.MATERIAL,
+                            materialIconKey = key,
+                        ),
+                    ) ?: t
+                }
+                pickingIconForTileId = null
+            },
+            onBack = { pickingIconForTileId = null },
+        )
+        return
+    }
+
     val currentPickingAppForTileId = pickingAppForTileId
     if (currentPickingAppForTileId != null) {
         AppPickerScreen(
@@ -307,6 +329,7 @@ internal fun ScrollBoxEditorScreen(
                 editorState = innerEditorState,
                 onConfigureWidget = {},
                 onPickApp = { pickingAppForTileId = it },
+                onPickMaterialIcon = { pickingIconForTileId = it },
                 openFontPicker = openFontPicker,
                 openIconPicker = openIconPicker,
                 fontEvents = fontEvents,
