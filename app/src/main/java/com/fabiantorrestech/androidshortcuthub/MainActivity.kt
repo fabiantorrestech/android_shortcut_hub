@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -46,7 +45,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.PrimaryScrollableTabRow
@@ -572,216 +570,6 @@ private fun SetupTab(
 }
 
 @Composable
-private fun GridTab(
-    config: ShortcutHubConfig,
-    settingsMessage: String?,
-    onSaveGrid: (Int, Int) -> Unit,
-    onSaveOpacity: (Float) -> Unit,
-) {
-    var rowsInput by remember(config.gridRows) { mutableStateOf(config.gridRows.toString()) }
-    var columnsInput by remember(config.gridColumns) { mutableStateOf(config.gridColumns.toString()) }
-    var overlayBackgroundAlpha by remember(config.overlayBackgroundAlpha) { mutableStateOf(config.overlayBackgroundAlpha) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Grid Size", style = MaterialTheme.typography.titleMedium)
-                Text("Shrinking the grid removes out-of-bounds tiles.")
-                OutlinedTextField(
-                    value = rowsInput,
-                    onValueChange = { rowsInput = it.filter(Char::isDigit).take(2) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Rows (1–24)") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = columnsInput,
-                    onValueChange = { columnsInput = it.filter(Char::isDigit).take(2) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Columns (1–16)") },
-                    singleLine = true,
-                )
-                OutlinedButton(
-                    onClick = {
-                        val rows = rowsInput.toIntOrNull()?.coerceIn(1, 24) ?: config.gridRows
-                        val columns = columnsInput.toIntOrNull()?.coerceIn(1, 16) ?: config.gridColumns
-                        rowsInput = rows.toString()
-                        columnsInput = columns.toString()
-                        onSaveGrid(rows, columns)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Save Grid Size")
-                }
-            }
-        }
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Background Opacity", style = MaterialTheme.typography.titleMedium)
-                Text("${"%.0f".format(overlayBackgroundAlpha * 100)}%")
-                Slider(
-                    value = overlayBackgroundAlpha,
-                    onValueChange = { overlayBackgroundAlpha = it },
-                    valueRange = 0f..0.9f,
-                )
-                OutlinedButton(
-                    onClick = { onSaveOpacity(overlayBackgroundAlpha) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Save Opacity")
-                }
-            }
-        }
-        settingsMessage?.let { Card(modifier = Modifier.fillMaxWidth()) { Text(it, modifier = Modifier.padding(16.dp)) } }
-    }
-}
-
-@Composable
-private fun AppearanceTab(
-    config: ShortcutHubConfig,
-    settingsMessage: String?,
-    onSaveTextSize: (Float) -> Unit,
-    onToggleBold: (Boolean) -> Unit,
-    onPickFont: () -> Unit,
-    onClearFont: () -> Unit,
-    onSaveTextColor: (DefaultTextColorMode, String?) -> Unit,
-) {
-    var defaultTextScale by remember(config.defaultTextScale) { mutableStateOf(config.defaultTextScale) }
-    var defaultTextColorMode by remember(config.defaultTextColorMode) { mutableStateOf(config.defaultTextColorMode) }
-    var defaultTextColorHexInput by remember(config.defaultTextColorHex) { mutableStateOf(config.defaultTextColorHex ?: "") }
-
-    val normalizedColorHex = remember(defaultTextColorHexInput) { normalizeHexColor(defaultTextColorHexInput) }
-    val customHexValid = defaultTextColorHexInput.isBlank() || normalizedColorHex != null
-    val previewTextColor = when (defaultTextColorMode) {
-        DefaultTextColorMode.SYSTEM -> MaterialTheme.colorScheme.onSurface
-        DefaultTextColorMode.BLACK -> Color.Black
-        DefaultTextColorMode.WHITE -> Color.White
-        DefaultTextColorMode.CUSTOM -> normalizedColorHex?.toComposeColor() ?: MaterialTheme.colorScheme.onSurface
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Typography", style = MaterialTheme.typography.titleMedium)
-                Text("Text size: ${"%.2f".format(defaultTextScale)}x")
-                Slider(value = defaultTextScale, onValueChange = { defaultTextScale = it }, valueRange = 0.5f..3.0f)
-                OutlinedButton(onClick = { onSaveTextSize(defaultTextScale) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Save Text Size")
-                }
-                SettingToggleRow(
-                    label = "Bold text",
-                    checked = config.defaultBoldText,
-                    onCheckedChange = onToggleBold,
-                )
-                Text(
-                    text = "Font: ${config.defaultFontName ?: "System default"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(onClick = onPickFont, modifier = Modifier.weight(1f)) {
-                        Text("Choose Font")
-                    }
-                    OutlinedButton(onClick = onClearFont, modifier = Modifier.weight(1f)) {
-                        Text("Clear Font")
-                    }
-                }
-            }
-        }
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Text Color", style = MaterialTheme.typography.titleMedium)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ColorModeButton(
-                        label = "System",
-                        selected = defaultTextColorMode == DefaultTextColorMode.SYSTEM,
-                        modifier = Modifier.weight(1f),
-                        onClick = { defaultTextColorMode = DefaultTextColorMode.SYSTEM },
-                    )
-                    ColorModeButton(
-                        label = "Black",
-                        selected = defaultTextColorMode == DefaultTextColorMode.BLACK,
-                        modifier = Modifier.weight(1f),
-                        onClick = { defaultTextColorMode = DefaultTextColorMode.BLACK },
-                    )
-                    ColorModeButton(
-                        label = "White",
-                        selected = defaultTextColorMode == DefaultTextColorMode.WHITE,
-                        modifier = Modifier.weight(1f),
-                        onClick = { defaultTextColorMode = DefaultTextColorMode.WHITE },
-                    )
-                    ColorModeButton(
-                        label = "Custom",
-                        selected = defaultTextColorMode == DefaultTextColorMode.CUSTOM,
-                        modifier = Modifier.weight(1f),
-                        onClick = { defaultTextColorMode = DefaultTextColorMode.CUSTOM },
-                    )
-                }
-                if (defaultTextColorMode == DefaultTextColorMode.CUSTOM) {
-                    OutlinedTextField(
-                        value = defaultTextColorHexInput,
-                        onValueChange = { defaultTextColorHexInput = it.trim().take(9) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Hex color") },
-                        placeholder = { Text("#FFFFFF") },
-                        singleLine = true,
-                        supportingText = {
-                            Text(if (customHexValid) normalizedColorHex ?: "Use #RRGGBB or #AARRGGBB" else "Invalid hex")
-                        },
-                        isError = !customHexValid,
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(modifier = Modifier.size(36.dp), shape = MaterialTheme.shapes.medium, color = previewTextColor) {}
-                    Text("Preview", color = previewTextColor, style = MaterialTheme.typography.bodyLarge)
-                }
-                OutlinedButton(
-                    onClick = {
-                        if (defaultTextColorMode == DefaultTextColorMode.CUSTOM && normalizedColorHex == null) return@OutlinedButton
-                        val hex = if (defaultTextColorMode == DefaultTextColorMode.CUSTOM) normalizedColorHex else null
-                        onSaveTextColor(defaultTextColorMode, hex)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Save Text Color")
-                }
-            }
-        }
-        settingsMessage?.let { Card(modifier = Modifier.fillMaxWidth()) { Text(it, modifier = Modifier.padding(16.dp)) } }
-    }
-}
-
-@Composable
 private fun BehaviorTab(
     config: ShortcutHubConfig,
     onConfigChange: (ShortcutHubConfig) -> Unit,
@@ -847,20 +635,6 @@ private fun BehaviorTab(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun ColorModeButton(
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    if (selected) {
-        Button(onClick = onClick, modifier = modifier) { Text(label) }
-    } else {
-        OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
     }
 }
 
@@ -1175,7 +949,9 @@ private fun LayoutTab(
     onSaveSettings: (OverlayUiState) -> Unit,
 ) {
     val context = LocalContext.current
-    // remember { } so that draft state persists while the user switches between tabs
+    // Scoped to this composition, which means leaving the Layout tab discards the draft. The
+    // editor guards that with its own "Save changes?" prompt on the way out rather than relying on
+    // the state surviving, so back is the only route here and it always asks first.
     val (portraitEditorState, landscapeEditorState) = remember {
         val (portrait, landscape) = OverlayStateRepository.loadBoth(context)
         OverlayEditorState(portrait) to OverlayEditorState(landscape)
@@ -1188,6 +964,9 @@ private fun LayoutTab(
         onSave = { portraitCommitted, landscapeCommitted ->
             OverlayStateRepository.saveLayout(context, portraitCommitted, OverlayOrientation.PORTRAIT)
             OverlayStateRepository.saveLayout(context, landscapeCommitted, OverlayOrientation.LANDSCAPE)
+            // Appearance settings are per-app rather than per-layout, so only one commit needs to
+            // supply them. Safe because the editor runs adoptGlobalsFrom across both states before
+            // committing, leaving the two identical in exactly those fields.
             onSaveSettings(portraitCommitted)
             Toast.makeText(context, "Layout saved. Toggle the overlay to apply.", Toast.LENGTH_SHORT).show()
         },

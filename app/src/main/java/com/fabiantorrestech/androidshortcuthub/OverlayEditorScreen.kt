@@ -127,15 +127,8 @@ internal fun OverlayEditorScreen(
     }
 
     fun syncGlobalsFromActive() {
-        val from = editorState
-        val to = if (activeTab == OverlayOrientation.PORTRAIT) landscapeEditorState else portraitEditorState
-        to.overlayBackgroundAlpha = from.overlayBackgroundAlpha
-        to.defaultTextScale = from.defaultTextScale
-        to.defaultBoldText = from.defaultBoldText
-        to.defaultFontUri = from.defaultFontUri
-        to.defaultFontName = from.defaultFontName
-        to.defaultTextColorMode = from.defaultTextColorMode
-        to.defaultTextColorHex = from.defaultTextColorHex
+        val other = if (activeTab == OverlayOrientation.PORTRAIT) landscapeEditorState else portraitEditorState
+        other.adoptGlobalsFrom(editorState)
     }
 
     /** The one place the editor persists anything. Both orientations are written together. */

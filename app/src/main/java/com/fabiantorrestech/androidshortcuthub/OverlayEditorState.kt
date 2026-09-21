@@ -119,6 +119,29 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
     }
 
     /**
+     * Copies the appearance settings that are shared between the two orientations from [other].
+     *
+     * These are per-app, not per-layout, but each orientation's state carries its own copy, so the
+     * editor has to keep them in step by hand whenever the active tab changes or a Save happens.
+     * Only the portrait commit is handed to the settings writer, which is correct precisely
+     * *because* this runs first - miss a field here and an edit made on the Landscape tab is
+     * silently dropped on save.
+     *
+     * Lives here, immediately below [commit], so the list of fields to copy sits next to the list
+     * of fields that get persisted. They have to agree, and keeping them in different files is how
+     * they would drift.
+     */
+    fun adoptGlobalsFrom(other: OverlayEditorState) {
+        overlayBackgroundAlpha = other.overlayBackgroundAlpha
+        defaultTextScale = other.defaultTextScale
+        defaultBoldText = other.defaultBoldText
+        defaultFontUri = other.defaultFontUri
+        defaultFontName = other.defaultFontName
+        defaultTextColorMode = other.defaultTextColorMode
+        defaultTextColorHex = other.defaultTextColorHex
+    }
+
+    /**
      * True if tile [id] differs from its last-saved version, or was added since the last save (no
      * saved counterpart). Drives the per-tile Cancel button's visibility.
      */
