@@ -3,59 +3,50 @@ package com.fabiantorrestech.androidshortcuthub
 import android.appwidget.AppWidgetManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.FormatSize
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberBottomSheetScaffoldState
+import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * In-app layout editor screen.
@@ -70,6 +61,7 @@ import kotlinx.coroutines.flow.collectLatest
  * change by hand makes the button go away again. Leaving with changes pending prompts; per-tile
  * undo lives in the inspector next to the tile it affects.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun OverlayEditorScreen(
     portraitEditorState: OverlayEditorState,
@@ -169,11 +161,22 @@ internal fun OverlayEditorScreen(
     // exactly one level of unwind per press.
     BackHandler { attemptExit() }
 
+    /**
+     * Kept current through [rememberUpdatedState] because the collector below is keyed on `Unit`
+     * and so never restarts. Without this it would capture `editorState` and `syncGlobalsFromActive`
+     * from the *first* composition, and picking a default font after switching to the Landscape tab
+     * wrote the font into the portrait state instead. The widget-bind path already takes this
+     * precaution; this one had been missed.
+     */
+    val applyDefaultFont = rememberUpdatedState<(String, String) -> Unit> { uri, name ->
+        editorState.defaultFontUri = uri
+        editorState.defaultFontName = name
+        syncGlobalsFromActive()
+    }
+
     LaunchedEffect(Unit) {
         OverlayEditorState.defaultFontEvents().collectLatest { (uri, name) ->
-            editorState.defaultFontUri = uri
-            editorState.defaultFontName = name
-            syncGlobalsFromActive()
+            applyDefaultFont.value(uri, name)
         }
     }
     val context = LocalContext.current
@@ -445,767 +448,191 @@ internal fun OverlayEditorScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // ── Shared wiring ────────────────────────────────────────────────────────
+    // Both arrangements drive the same callbacks, so portrait and landscape can differ in layout
+    // without being able to differ in behaviour.
 
-        // ── Top bar: back arrow | title | popup buttons | Save ──────────────
-        var gridPopupOpen by remember { mutableStateOf(false) }
-        var appearancePopupOpen by remember { mutableStateOf(false) }
+    val onSelectTab: (OverlayOrientation) -> Unit = { target ->
+        syncGlobalsFromActive()
+        activeTab = target
+    }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = { attemptExit() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-            }
-            Text(
-                text = "Layout",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-            )
-            // Appearance popup
-            Box {
-                IconButton(onClick = { appearancePopupOpen = true }) {
-                    Icon(Icons.Default.FormatSize, contentDescription = "Default App Text Settings")
+    fun addWidget() {
+        val hasVolumeSlider = editorState.tiles.any {
+            it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
+        }
+        val hasBrightnessSlider = editorState.tiles.any {
+            it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
+        }
+        android.util.Log.d(WIDGET_BIND_TAG, "editor: '+ Widget' tapped")
+        WidgetBindingCoordinator.startBinding()
+        widgetLauncher.launch(
+            BindWidgetActivity.createIntent(
+                context,
+                editorState.gridRows,
+                editorState.gridColumns,
+                hasVolumeSlider,
+                hasBrightnessSlider,
+                autoToggleOverlay = false,
+            ),
+        )
+    }
+
+    val topBar: @Composable () -> Unit = {
+        EditorTopBar(
+            editorState = editorState,
+            anyUnsaved = anyUnsaved,
+            onBack = { attemptExit() },
+            onSave = { saveAll() },
+            onPopupDismissed = { syncGlobalsFromActive() },
+            openDefaultFontPicker = openDefaultFontPicker,
+        )
+    }
+
+    val inspector: @Composable (Modifier) -> Unit = { inspectorModifier ->
+        OverlayTileInspector(
+            editorState = editorState,
+            onConfigureWidget = { appWidgetId ->
+                if (activity != null) {
+                    ShortcutHubWidgetHost.getInstance(context)
+                        .startAppWidgetConfigureActivityForResult(
+                            activity,
+                            appWidgetId,
+                            0,
+                            CONFIGURE_WIDGET_REQUEST_CODE,
+                            null,
+                        )
                 }
-                DropdownMenu(
-                    expanded = appearancePopupOpen,
-                    onDismissRequest = {
-                        appearancePopupOpen = false
-                        syncGlobalsFromActive()
-                    },
-                ) {
-                    AppearancePopupContent(editorState, openDefaultFontPicker)
+            },
+            onPickApp = { pickingAppForTileId = it },
+            openFontPicker = openFontPicker,
+            openIconPicker = openIconPicker,
+            fontEvents = fontEvents,
+            iconEvents = iconEvents,
+            onEditScrollBox = { editingScrollBoxId = it },
+            onEditWidgetStack = { editingWidgetStackId = it },
+            modifier = inspectorModifier,
+        )
+    }
+
+    if (isLandscapeEditor) {
+        // ── Landscape: preview left | controls right ─────────────────────────
+        // Width is the plentiful axis here, so a plain split already gives the preview half the
+        // screen and the inspector a full-height column. No sheet needed.
+        Column(modifier = Modifier.fillMaxSize()) {
+            topBar()
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                EditorPreviewPane(
+                    editorState = editorState,
+                    deviceAspectRatio = deviceAspectRatio,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    EditorOrientationTabs(activeTab, editorState, onSelectTab)
+                    AddTileRow(editorState = editorState, onAddWidget = { addWidget() })
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                        inspector(Modifier)
+                    }
                 }
-            }
-            // Grid / opacity popup
-            Box {
-                IconButton(onClick = { gridPopupOpen = true }) {
-                    Icon(Icons.Default.GridView, contentDescription = "Grid Settings")
-                }
-                DropdownMenu(
-                    expanded = gridPopupOpen,
-                    onDismissRequest = {
-                        gridPopupOpen = false
-                        syncGlobalsFromActive()
-                    },
-                ) {
-                    GridPopupContent(editorState)
-                }
-            }
-            // The editor's only Save. Present only while something differs from the last save, so
-            // its appearance is itself the "you have changes" signal the old text label carried.
-            if (anyUnsaved) {
-                Button(onClick = { saveAll() }) { Text("Save") }
             }
         }
+    } else {
+        // ── Portrait: preview owns the screen, controls live in a sheet ──────
+        // Portrait used to stack five regions in one Column - top bar, tabs, preview at
+        // weight(1.4f), add-tile row, inspector at weight(1f) - so roughly 200dp of fixed chrome
+        // was taken off the top and the inspector then held ~40% of what was left whether or not
+        // anything was selected. The preview, the thing the user is actually arranging, got a
+        // little over half of the remainder.
+        //
+        // The inspector is now a sheet that overlays the preview instead of shrinking it. At rest
+        // it peeks just far enough for the selected tile's summary and the add-tile row; dragging
+        // it up reveals the full inspector over the preview, and it never takes space it is not
+        // using.
+        val sheetScaffoldState = rememberBottomSheetScaffoldState(
+            bottomSheetState = rememberStandardBottomSheetState(initialValue = SheetValue.PartiallyExpanded),
+        )
+        val sheetScope = rememberCoroutineScope()
+        val screenHeight = configuration.screenHeightDp.dp
 
-        if (isLandscapeEditor) {
-            // ── Landscape: preview left | controls right ─────────────────────
-            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val previewWidth = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight * deviceAspectRatio else maxWidth
-                    val previewHeight = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight else maxWidth / deviceAspectRatio
-
-                    Box(
-                        modifier = Modifier
-                            .size(previewWidth, previewHeight)
-                            .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
-                    ) {
-                        OverlayGridPreview(
-                            tiles = editorState.tiles.toList(),
-                            gridRows = editorState.gridRows,
-                            gridColumns = editorState.gridColumns,
-                            showGrid = true,
-                            mode = OverlayRenderMode.EditorPreview,
-                            selectedTileId = editorState.selectedTileId,
-                            isMoveMode = false,
-                            defaultTextScale = editorState.savedState.defaultTextScale,
-                            defaultFontWeight = defaultFontWeight,
-                            defaultFontFamily = null,
-                            defaultTextColor = defaultTextColor,
-                            hapticFeedbackEnabled = editorState.savedState.hapticFeedbackEnabled,
-                            preloadedFonts = emptyMap(),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                            onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
-                        )
-                    }
-                }
-
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    TabRow(selectedTabIndex = if (activeTab == OverlayOrientation.PORTRAIT) 0 else 1) {
-                        Tab(
-                            selected = activeTab == OverlayOrientation.PORTRAIT,
-                            onClick = {
-                                syncGlobalsFromActive()
-                                activeTab = OverlayOrientation.PORTRAIT
-                            },
-                            text = { Text("Portrait") },
-                        )
-                        Tab(
-                            selected = activeTab == OverlayOrientation.LANDSCAPE,
-                            onClick = {
-                                syncGlobalsFromActive()
-                                activeTab = OverlayOrientation.LANDSCAPE
-                            },
-                            text = { Text("Landscape") },
-                        )
-                    }
-
-                    if (activeTab == OverlayOrientation.LANDSCAPE && editorState.tiles.isEmpty()) {
-                        Text(
-                            text = "Landscape layout is empty — add tiles to configure it.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedButton(onClick = {
-                            val cell = editorState.findFirstOpenCell(1, 1)
-                            if (cell == null) {
-                                Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                AppTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    app = LaunchableApp(label = "App", componentName = null),
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                            Toast.makeText(context, "Tap the tile then 'Change app' in the inspector", Toast.LENGTH_SHORT).show()
-                        }) { Text("+ App") }
-
-                        OutlinedButton(onClick = {
-                            val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
-                            val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
-                            android.util.Log.d(WIDGET_BIND_TAG, "editor: '+ Widget' tapped (portrait/landscape bar)")
-                            WidgetBindingCoordinator.startBinding()
-                            widgetLauncher.launch(
-                                BindWidgetActivity.createIntent(
-                                    context,
-                                    editorState.gridRows,
-                                    editorState.gridColumns,
-                                    hasVolumeSlider,
-                                    hasBrightnessSlider,
-                                    autoToggleOverlay = false,
-                                ),
-                            )
-                        }) { Text("+ Widget") }
-
-                        OutlinedButton(onClick = {
-                            val cell = editorState.findFirstOpenCell(1, 1)
-                            if (cell == null) {
-                                Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                IntentTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    intentAction = "android.intent.action.MAIN",
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                            Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
-                        }) { Text("+ Intent") }
-
-                        OutlinedButton(onClick = {
-                            val fit = listOf(3, 2, 1).firstNotNullOfOrNull { s ->
-                                editorState.findFirstOpenCell(s, s)?.let { it to s }
-                            }
-                            if (fit == null) {
-                                Toast.makeText(context, "No space on grid for a scrollbox", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val (cell, span) = fit
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                ScrollBoxTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    rowSpan = span,
-                                    columnSpan = span,
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                            Toast.makeText(context, "Tap the scrollbox, then 'Edit contents' in the inspector", Toast.LENGTH_SHORT).show()
-                        }) { Text("+ Scrollbox") }
-
-                        OutlinedButton(onClick = {
-                            val fit = listOf(2, 1).firstNotNullOfOrNull { s ->
-                                editorState.findFirstOpenCell(s, s)?.let { it to s }
-                            }
-                            if (fit == null) {
-                                Toast.makeText(context, "No space on grid for a widget stack", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val (cell, span) = fit
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                WidgetStackTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    rowSpan = span,
-                                    columnSpan = span,
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                            // Do NOT auto-open the widget editor — leave the stack placed + selected so
-                            // the user can size/move it on the grid first, then tap "Edit stack ›" to
-                            // add widgets (consistent with Scrollbox).
-                        }) { Text("+ Widget Stack") }
-
-                        OutlinedButton(onClick = {
-                            val count = editorState.tiles.count {
-                                it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
-                            }
-                            if (count >= 2) {
-                                Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val cell = editorState.findFirstOpenCell(3, 1)
-                            if (cell == null) {
-                                Toast.makeText(context, "No space on grid for volume slider", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                SystemSliderTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    rowSpan = 3,
-                                    columnSpan = 1,
-                                    config = SystemSliderConfig(sliderType = SliderType.VOLUME),
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                        }) { Text("+ Vol Slider") }
-
-                        OutlinedButton(onClick = {
-                            val count = editorState.tiles.count {
-                                it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
-                            }
-                            if (count >= 2) {
-                                Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val cell = editorState.findFirstOpenCell(3, 1)
-                            if (cell == null) {
-                                Toast.makeText(context, "No space on grid for brightness slider", Toast.LENGTH_SHORT).show()
-                                return@OutlinedButton
-                            }
-                            val newId = editorState.nextTileId++
-                            editorState.addTile(
-                                SystemSliderTileState(
-                                    id = newId,
-                                    row = cell.first,
-                                    column = cell.second,
-                                    rowSpan = 3,
-                                    columnSpan = 1,
-                                    config = SystemSliderConfig(sliderType = SliderType.BRIGHTNESS),
-                                ),
-                            )
-                            editorState.selectedTileId = newId
-                        }) { Text("+ Bright Slider") }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                    ) {
-                        OverlayTileInspector(
-                            editorState = editorState,
-                            onConfigureWidget = { appWidgetId ->
-                                if (activity != null) {
-                                    ShortcutHubWidgetHost.getInstance(context)
-                                        .startAppWidgetConfigureActivityForResult(
-                                            activity,
-                                            appWidgetId,
-                                            0,
-                                            CONFIGURE_WIDGET_REQUEST_CODE,
-                                            null,
-                                        )
-                                }
-                            },
-                            onPickApp = { pickingAppForTileId = it },
-                            openFontPicker = openFontPicker,
-                            openIconPicker = openIconPicker,
-                            fontEvents = fontEvents,
-                            iconEvents = iconEvents,
-                            onEditScrollBox = { editingScrollBoxId = it },
-                            onEditWidgetStack = { editingWidgetStackId = it },
-                        )
-                    }
-                }
-            }
-        } else {
-            // ── Portrait layout ──────────────────────────────────────────────
-            TabRow(selectedTabIndex = if (activeTab == OverlayOrientation.PORTRAIT) 0 else 1) {
-                Tab(
-                    selected = activeTab == OverlayOrientation.PORTRAIT,
-                    onClick = {
-                        syncGlobalsFromActive()
-                        activeTab = OverlayOrientation.PORTRAIT
-                    },
-                    text = { Text("Portrait") },
-                )
-                Tab(
-                    selected = activeTab == OverlayOrientation.LANDSCAPE,
-                    onClick = {
-                        syncGlobalsFromActive()
-                        activeTab = OverlayOrientation.LANDSCAPE
-                    },
-                    text = { Text("Landscape") },
-                )
-            }
-
-            if (activeTab == OverlayOrientation.LANDSCAPE && editorState.tiles.isEmpty()) {
-                Text(
-                    text = "Landscape layout is empty — add tiles to configure it.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
-
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1.4f),
-                contentAlignment = Alignment.Center,
-            ) {
-                val previewWidth = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight * deviceAspectRatio else maxWidth
-                val previewHeight = if (maxWidth / maxHeight > deviceAspectRatio) maxHeight else maxWidth / deviceAspectRatio
-
-                Box(
-                    modifier = Modifier
-                        .size(previewWidth, previewHeight)
-                        .background(Color.Black.copy(alpha = editorState.overlayBackgroundAlpha)),
-                ) {
-                    OverlayGridPreview(
-                        tiles = editorState.tiles.toList(),
-                        gridRows = editorState.gridRows,
-                        gridColumns = editorState.gridColumns,
-                        showGrid = true,
-                        mode = OverlayRenderMode.EditorPreview,
-                        selectedTileId = editorState.selectedTileId,
-                        isMoveMode = false,
-                        defaultTextScale = editorState.savedState.defaultTextScale,
-                        defaultFontWeight = defaultFontWeight,
-                        defaultFontFamily = null,
-                        defaultTextColor = defaultTextColor,
-                        hapticFeedbackEnabled = editorState.savedState.hapticFeedbackEnabled,
-                        preloadedFonts = emptyMap(),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                        onTileSelect = { id -> editorState.selectedTileId = if (editorState.selectedTileId == id) null else id },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // + App
-                OutlinedButton(onClick = {
-                    val cell = editorState.findFirstOpenCell(1, 1)
-                    if (cell == null) {
-                        Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    // Placeholder app tile — user selects the app in the inspector
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        AppTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            app = LaunchableApp(label = "App", componentName = null),
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                    Toast.makeText(context, "Tap the tile then 'Change app' in the inspector", Toast.LENGTH_SHORT).show()
-                }) { Text("+ App") }
-
-                // + Widget
-                OutlinedButton(onClick = {
-                    val hasVolumeSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME }
-                    val hasBrightnessSlider = editorState.tiles.any { it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS }
-                    android.util.Log.d(WIDGET_BIND_TAG, "editor: '+ Widget' tapped (alt bar)")
-                    WidgetBindingCoordinator.startBinding()
-                    widgetLauncher.launch(
-                        BindWidgetActivity.createIntent(
-                            context,
-                            editorState.gridRows,
-                            editorState.gridColumns,
-                            hasVolumeSlider,
-                            hasBrightnessSlider,
-                            autoToggleOverlay = false,
-                        ),
-                    )
-                }) { Text("+ Widget") }
-
-                // + Intent
-                OutlinedButton(onClick = {
-                    val cell = editorState.findFirstOpenCell(1, 1)
-                    if (cell == null) {
-                        Toast.makeText(context, "No space on grid", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        IntentTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            intentAction = "android.intent.action.MAIN",
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                    Toast.makeText(context, "Edit the intent in the inspector below", Toast.LENGTH_SHORT).show()
-                }) { Text("+ Intent") }
-
-                // + Scrollbox
-                OutlinedButton(onClick = {
-                    val fit = listOf(3, 2, 1).firstNotNullOfOrNull { s ->
-                        editorState.findFirstOpenCell(s, s)?.let { it to s }
-                    }
-                    if (fit == null) {
-                        Toast.makeText(context, "No space on grid for a scrollbox", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val (cell, span) = fit
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        ScrollBoxTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            rowSpan = span,
-                            columnSpan = span,
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                    Toast.makeText(context, "Tap the scrollbox, then 'Edit contents' in the inspector", Toast.LENGTH_SHORT).show()
-                }) { Text("+ Scrollbox") }
-
-                // + Widget Stack
-                OutlinedButton(onClick = {
-                    val fit = listOf(2, 1).firstNotNullOfOrNull { s ->
-                        editorState.findFirstOpenCell(s, s)?.let { it to s }
-                    }
-                    if (fit == null) {
-                        Toast.makeText(context, "No space on grid for a widget stack", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val (cell, span) = fit
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        WidgetStackTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            rowSpan = span,
-                            columnSpan = span,
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                    // Do NOT auto-open the widget editor — size/move on the grid first, then
-                    // tap "Edit stack ›" to add widgets (consistent with Scrollbox).
-                }) { Text("+ Widget Stack") }
-
-                // + Volume Slider
-                OutlinedButton(onClick = {
-                    val count = editorState.tiles.count {
-                        it is SystemSliderTileState && it.config.sliderType == SliderType.VOLUME
-                    }
-                    if (count >= 2) {
-                        Toast.makeText(context, "Maximum 2 volume sliders allowed", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val cell = editorState.findFirstOpenCell(3, 1)
-                    if (cell == null) {
-                        Toast.makeText(context, "No space on grid for volume slider", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        SystemSliderTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            rowSpan = 3,
-                            columnSpan = 1,
-                            config = SystemSliderConfig(sliderType = SliderType.VOLUME),
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                }) { Text("+ Vol Slider") }
-
-                // + Brightness Slider
-                OutlinedButton(onClick = {
-                    val count = editorState.tiles.count {
-                        it is SystemSliderTileState && it.config.sliderType == SliderType.BRIGHTNESS
-                    }
-                    if (count >= 2) {
-                        Toast.makeText(context, "Maximum 2 brightness sliders allowed", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val cell = editorState.findFirstOpenCell(3, 1)
-                    if (cell == null) {
-                        Toast.makeText(context, "No space on grid for brightness slider", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    val newId = editorState.nextTileId++
-                    editorState.addTile(
-                        SystemSliderTileState(
-                            id = newId,
-                            row = cell.first,
-                            column = cell.second,
-                            rowSpan = 3,
-                            columnSpan = 1,
-                            config = SystemSliderConfig(sliderType = SliderType.BRIGHTNESS),
-                        ),
-                    )
-                    editorState.selectedTileId = newId
-                }) { Text("+ Bright Slider") }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
-                OverlayTileInspector(
+        BottomSheetScaffold(
+            scaffoldState = sheetScaffoldState,
+            topBar = topBar,
+            sheetPeekHeight = EDITOR_SHEET_PEEK_HEIGHT,
+            sheetContent = {
+                SelectedTileSummary(
                     editorState = editorState,
-                    onConfigureWidget = { appWidgetId ->
-                        if (activity != null) {
-                            ShortcutHubWidgetHost.getInstance(context)
-                                .startAppWidgetConfigureActivityForResult(
-                                    activity,
-                                    appWidgetId,
-                                    0,
-                                    CONFIGURE_WIDGET_REQUEST_CODE,
-                                    null,
-                                )
-                        }
-                    },
-                    onPickApp = { pickingAppForTileId = it },
-                    openFontPicker = openFontPicker,
-                    openIconPicker = openIconPicker,
-                    fontEvents = fontEvents,
-                    iconEvents = iconEvents,
-                    onEditScrollBox = { editingScrollBoxId = it },
-                    onEditWidgetStack = { editingWidgetStackId = it },
+                    onClick = { sheetScope.launch { sheetScaffoldState.bottomSheetState.expand() } },
+                )
+                AddTileRow(editorState = editorState, onAddWidget = { addWidget() })
+                HorizontalDivider()
+                // Bounded so the sheet cannot grow past the screen: the inspector scrolls
+                // internally, and an unbounded scroll container inside a sheet has no height to
+                // measure against.
+                inspector(Modifier.heightIn(max = screenHeight * 0.55f))
+            },
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize(),
+            ) {
+                EditorOrientationTabs(activeTab, editorState, onSelectTab)
+                EditorPreviewPane(
+                    editorState = editorState,
+                    deviceAspectRatio = deviceAspectRatio,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                 )
             }
+        }
+    }
+}
+
+/** Tall enough for the summary row and the add-tile row, and nothing more. */
+private val EDITOR_SHEET_PEEK_HEIGHT = 132.dp
+
+/**
+ * The one line of the sheet that is always visible: what is selected and how big it is. Tapping it
+ * expands the sheet, so the selection made in the preview has an obvious way through to its
+ * controls without hunting for the drag handle.
+ */
+@Composable
+private fun SelectedTileSummary(
+    editorState: OverlayEditorState,
+    onClick: () -> Unit,
+) {
+    val selectedId = editorState.selectedTileId
+    val tile = selectedId?.let { id -> editorState.tiles.firstOrNull { it.id == id } }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (tile == null) {
+            Text(
+                text = "Tap a tile to select it",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = tile.displayLabel,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${tile.columnSpan}×${tile.rowSpan}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 /** Request code used when launching the widget configure activity from the editor. */
 internal const val CONFIGURE_WIDGET_REQUEST_CODE = 9001
-
-@Composable
-private fun GridPopupContent(editorState: OverlayEditorState) {
-    var rowsInput by remember(editorState.gridRows) { mutableStateOf(editorState.gridRows.toString()) }
-    var colsInput by remember(editorState.gridColumns) { mutableStateOf(editorState.gridColumns.toString()) }
-
-    Column(
-        modifier = Modifier
-            .width(260.dp)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text("Grid Settings", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
-            value = rowsInput,
-            onValueChange = { rowsInput = it.filter(Char::isDigit).take(2) },
-            label = { Text("Rows (1–24)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = colsInput,
-            onValueChange = { colsInput = it.filter(Char::isDigit).take(2) },
-            label = { Text("Columns (1–16)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        // Shrinking the grid deletes every tile that no longer fits. Say so before it happens
-        // rather than after, since the only undo is leaving the editor without saving.
-        val pendingRows = rowsInput.toIntOrNull()?.coerceIn(1, 24) ?: editorState.gridRows
-        val pendingCols = colsInput.toIntOrNull()?.coerceIn(1, 16) ?: editorState.gridColumns
-        val tilesLost = editorState.tilesLostByGridSize(pendingRows, pendingCols)
-        if (tilesLost > 0) {
-            Text(
-                text = "Removes $tilesLost ${if (tilesLost == 1) "tile that no longer fits" else "tiles that no longer fit"}.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        OutlinedButton(
-            onClick = {
-                rowsInput = pendingRows.toString()
-                colsInput = pendingCols.toString()
-                editorState.applyGridSize(pendingRows, pendingCols)
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (tilesLost > 0) "Apply and remove $tilesLost" else "Apply Grid Size") }
-
-        Text(
-            "Background Opacity  ${"%.0f".format(editorState.overlayBackgroundAlpha * 100)}%",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Slider(
-            value = editorState.overlayBackgroundAlpha,
-            onValueChange = { editorState.overlayBackgroundAlpha = it },
-            valueRange = 0f..0.9f,
-        )
-    }
-}
-
-@Composable
-private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultFontPicker: () -> Unit) {
-    val normalizedColorHex = remember(editorState.defaultTextColorHex) {
-        normalizeHexColor(editorState.defaultTextColorHex)
-    }
-    val customHexValid = editorState.defaultTextColorHex.isNullOrBlank() || normalizedColorHex != null
-    val previewTextColor = when (editorState.defaultTextColorMode) {
-        DefaultTextColorMode.SYSTEM -> Color.Unspecified
-        DefaultTextColorMode.BLACK -> Color.Black
-        DefaultTextColorMode.WHITE -> Color.White
-        DefaultTextColorMode.CUSTOM -> normalizedColorHex?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color.Unspecified
-    }
-
-    Column(
-        modifier = Modifier
-            .width(280.dp)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text("Default App Text Settings", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-
-        Text("Text size: ${"%.2f".format(editorState.defaultTextScale)}x", style = MaterialTheme.typography.bodySmall)
-        Slider(
-            value = editorState.defaultTextScale,
-            onValueChange = { editorState.defaultTextScale = it },
-            valueRange = 0.5f..3.0f,
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Bold text", style = MaterialTheme.typography.bodySmall)
-            Switch(
-                checked = editorState.defaultBoldText,
-                onCheckedChange = { editorState.defaultBoldText = it },
-            )
-        }
-
-        Text(
-            "Font: ${editorState.defaultFontName ?: "System default"}",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = openDefaultFontPicker, modifier = Modifier.weight(1f)) { Text("Choose") }
-            OutlinedButton(
-                onClick = {
-                    editorState.defaultFontUri = null
-                    editorState.defaultFontName = null
-                },
-                modifier = Modifier.weight(1f),
-            ) { Text("Clear") }
-        }
-
-        Text("Text Color", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-        val colorModeOptions = listOf(
-            "System" to DefaultTextColorMode.SYSTEM,
-            "Black" to DefaultTextColorMode.BLACK,
-            "White" to DefaultTextColorMode.WHITE,
-            "Custom" to DefaultTextColorMode.CUSTOM,
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            colorModeOptions.chunked(2).forEach { rowItems ->
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    rowItems.forEach { (label, mode) ->
-                        val selected = editorState.defaultTextColorMode == mode
-                        OutlinedButton(
-                            onClick = { editorState.defaultTextColorMode = mode },
-                            modifier = Modifier.weight(1f),
-                            colors = if (selected) androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            ) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors(),
-                        ) { Text(label, style = MaterialTheme.typography.labelSmall) }
-                    }
-                }
-            }
-        }
-        if (editorState.defaultTextColorMode == DefaultTextColorMode.CUSTOM) {
-            OutlinedTextField(
-                value = editorState.defaultTextColorHex ?: "",
-                onValueChange = {
-                    editorState.defaultTextColorHex = it.trim().take(9).ifBlank { null }
-                },
-                label = { Text("Hex color") },
-                placeholder = { Text("#FFFFFF") },
-                singleLine = true,
-                isError = !customHexValid,
-                supportingText = {
-                    Text(if (customHexValid) normalizedColorHex ?: "#RRGGBB / #AARRGGBB" else "Invalid hex")
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        if (editorState.defaultTextColorMode != DefaultTextColorMode.SYSTEM) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Surface(modifier = Modifier.size(24.dp), shape = MaterialTheme.shapes.small, color = previewTextColor) {}
-                Text("Preview", color = previewTextColor, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
