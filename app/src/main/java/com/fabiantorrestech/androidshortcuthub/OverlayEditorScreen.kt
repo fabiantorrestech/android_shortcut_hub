@@ -85,11 +85,27 @@ internal fun OverlayEditorScreen(
     var activeTab by remember { mutableStateOf(OverlayOrientation.PORTRAIT) }
     val editorState = if (activeTab == OverlayOrientation.PORTRAIT) portraitEditorState else landscapeEditorState
 
-    // When set, a container editor takes over the whole screen (swap, not overlay), so the shared
-    // font/icon pick and widget-bind events route to exactly one consumer. Both ids are declared
-    // before either early-return so their remembered state is always present.
+    // When set, a container editor or the app picker takes over the whole screen (swap, not
+    // overlay), so the shared font/icon pick and widget-bind events route to exactly one consumer.
+    // All three ids are declared before any early-return so their remembered state is always
+    // present, and each swapped-in screen brings its own BackHandler, giving one level of unwind.
     var editingScrollBoxId by remember { mutableStateOf<Int?>(null) }
     var editingWidgetStackId by remember { mutableStateOf<Int?>(null) }
+    var pickingAppForTileId by remember { mutableStateOf<Int?>(null) }
+
+    val currentPickingAppForTileId = pickingAppForTileId
+    if (currentPickingAppForTileId != null) {
+        AppPickerScreen(
+            onAppSelected = { app ->
+                editorState.updateTile(currentPickingAppForTileId) { tile ->
+                    (tile as? AppTileState)?.copy(app = app) ?: tile
+                }
+                pickingAppForTileId = null
+            },
+            onBack = { pickingAppForTileId = null },
+        )
+        return
+    }
     val currentEditingScrollBoxId = editingScrollBoxId
     if (currentEditingScrollBoxId != null) {
         ScrollBoxEditorScreen(
@@ -742,7 +758,7 @@ internal fun OverlayEditorScreen(
                                         )
                                 }
                             },
-                            loadLaunchableApps = { loadInstalledLaunchableApps(context) },
+                            onPickApp = { pickingAppForTileId = it },
                             openFontPicker = openFontPicker,
                             openIconPicker = openIconPicker,
                             fontEvents = fontEvents,
@@ -1013,7 +1029,7 @@ internal fun OverlayEditorScreen(
                                 )
                         }
                     },
-                    loadLaunchableApps = { loadInstalledLaunchableApps(context) },
+                    onPickApp = { pickingAppForTileId = it },
                     openFontPicker = openFontPicker,
                     openIconPicker = openIconPicker,
                     fontEvents = fontEvents,

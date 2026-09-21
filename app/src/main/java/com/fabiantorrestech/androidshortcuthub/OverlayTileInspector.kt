@@ -55,7 +55,7 @@ import kotlinx.coroutines.flow.collectLatest
 internal fun OverlayTileInspector(
     editorState: OverlayEditorState,
     onConfigureWidget: (appWidgetId: Int) -> Unit,
-    loadLaunchableApps: () -> List<LaunchableApp>,
+    onPickApp: (tileId: Int) -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
     fontEvents: Flow<TileFontSelection>,
@@ -212,7 +212,7 @@ internal fun OverlayTileInspector(
                 AppTileInspectorControls(
                     tile = tile,
                     editorState = editorState,
-                    loadLaunchableApps = loadLaunchableApps,
+                    onPickApp = onPickApp,
                     openFontPicker = openFontPicker,
                     openIconPicker = openIconPicker,
                 )
@@ -399,15 +399,14 @@ private fun ScrollBoxSelectButton(label: String, selected: Boolean, onClick: () 
 private fun AppTileInspectorControls(
     tile: AppTileState,
     editorState: OverlayEditorState,
-    loadLaunchableApps: () -> List<LaunchableApp>,
+    onPickApp: (tileId: Int) -> Unit,
     openFontPicker: (tileId: Int) -> Unit,
     openIconPicker: (tileId: Int) -> Unit,
 ) {
-    var showAppChooser by remember { mutableStateOf(false) }
     var showMaterialIconPicker by remember { mutableStateOf(false) }
 
     OutlinedButton(
-        onClick = { showAppChooser = true },
+        onClick = { onPickApp(tile.id) },
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Change app") }
 
@@ -459,17 +458,6 @@ private fun AppTileInspectorControls(
                 showMaterialIconPicker = false
             },
             onDismiss = { showMaterialIconPicker = false },
-        )
-    }
-
-    if (showAppChooser) {
-        InlineAppChooser(
-            loadLaunchableApps = loadLaunchableApps,
-            onAppSelected = { app ->
-                editorState.updateTile(tile.id) { (it as AppTileState).copy(app = app) }
-                showAppChooser = false
-            },
-            onDismiss = { showAppChooser = false },
         )
     }
 }
@@ -570,109 +558,6 @@ private fun InlineMaterialIconPicker(
 
 // ── Inline app chooser ────────────────────────────────────────────────────────
 
-@Composable
-private fun InlineAppChooser(
-    loadLaunchableApps: () -> List<LaunchableApp>,
-    onAppSelected: (LaunchableApp) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    // Back closes the chooser rather than falling through to the editor behind it.
-    BackHandler { onDismiss() }
-
-    var apps by remember { mutableStateOf<List<LaunchableApp>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var searchQuery by remember { mutableStateOf("") }
-    var customPackageInput by remember { mutableStateOf("") }
-    var customPackageError by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) {
-        isLoading = true
-        runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { loadLaunchableApps() } }
-            .onSuccess { apps = it }
-        isLoading = false
-    }
-
-    val filtered = remember(apps, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isEmpty()) apps else apps.filter {
-            it.label.contains(q, ignoreCase = true) || it.packageName.contains(q, ignoreCase = true)
-        }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Choose app", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Search") },
-            singleLine = true,
-        )
-        if (isLoading) {
-            Text("Loading apps...", style = MaterialTheme.typography.bodySmall)
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().height(160.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(filtered.take(30)) { app ->
-                    OutlinedButton(
-                        onClick = { onAppSelected(app) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(app.label, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                app.componentName?.packageName ?: app.launchIntentPackage.orEmpty(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Manual package name entry
-        Text(
-            "Or enter a package name",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = customPackageInput,
-            onValueChange = { customPackageInput = it; customPackageError = null },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Package name") },
-            placeholder = { Text("com.example.app") },
-            singleLine = true,
-            isError = customPackageError != null,
-            supportingText = customPackageError?.let { { Text(it) } },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = {
-                    val pkg = customPackageInput.trim()
-                    if (pkg.isEmpty()) { customPackageError = "Enter a package name"; return@OutlinedButton }
-                    val pm = context.packageManager
-                    val launchIntent = pm.getLaunchIntentForPackage(pkg)
-                    val component = launchIntent?.component
-                    val label = runCatching {
-                        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                    }.getOrNull()
-                    if (label == null && component == null) {
-                        customPackageError = "Package not found on this device"
-                        return@OutlinedButton
-                    }
-                    onAppSelected(LaunchableApp(label = label ?: pkg, componentName = component))
-                },
-                modifier = Modifier.weight(1f),
-            ) { Text("Use package") }
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
-        }
-    }
-}
 
 // ── Inline intent form ────────────────────────────────────────────────────────
 

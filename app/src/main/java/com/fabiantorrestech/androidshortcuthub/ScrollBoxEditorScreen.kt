@@ -73,6 +73,10 @@ internal fun ScrollBoxEditorScreen(
         return
     }
 
+    // Declared before the picker's early return so the id survives the swap, mirroring how
+    // OverlayEditorScreen hosts the same picker for top-level tiles.
+    var pickingAppForTileId by remember { mutableStateOf<Int?>(null) }
+
     // Scoped editor state for the inner grid — reuses every grid operation OverlayEditorState provides.
     val innerEditorState = remember(scrollBoxId) {
         OverlayEditorState(
@@ -115,6 +119,22 @@ internal fun ScrollBoxEditorScreen(
             ) ?: current
         }
         onBack()
+    }
+
+    // Returns before the BackHandler below, so while the picker is up its own handler is the only
+    // one composed and back closes the picker rather than committing and leaving the scrollbox.
+    val currentPickingAppForTileId = pickingAppForTileId
+    if (currentPickingAppForTileId != null) {
+        AppPickerScreen(
+            onAppSelected = { app ->
+                innerEditorState.updateTile(currentPickingAppForTileId) { tile ->
+                    (tile as? AppTileState)?.copy(app = app) ?: tile
+                }
+                pickingAppForTileId = null
+            },
+            onBack = { pickingAppForTileId = null },
+        )
+        return
     }
 
     // System back must do what the top-bar arrow does. Without this the press falls through to
@@ -286,7 +306,7 @@ internal fun ScrollBoxEditorScreen(
             OverlayTileInspector(
                 editorState = innerEditorState,
                 onConfigureWidget = {},
-                loadLaunchableApps = { loadInstalledLaunchableApps(context) },
+                onPickApp = { pickingAppForTileId = it },
                 openFontPicker = openFontPicker,
                 openIconPicker = openIconPicker,
                 fontEvents = fontEvents,
