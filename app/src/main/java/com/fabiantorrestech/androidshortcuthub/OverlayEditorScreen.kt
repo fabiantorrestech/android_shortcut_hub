@@ -84,7 +84,12 @@ internal fun OverlayEditorScreen(
     var editingScrollBoxId by remember { mutableStateOf<Int?>(null) }
     var editingWidgetStackId by remember { mutableStateOf<Int?>(null) }
     var pickingAppForTileId by remember { mutableStateOf<Int?>(null) }
+    var showElementList by remember { mutableStateOf(false) }
 
+    if (showElementList) {
+        TileElementList(editorState = editorState, onBack = { showElementList = false })
+        return
+    }
     val currentPickingAppForTileId = pickingAppForTileId
     if (currentPickingAppForTileId != null) {
         AppPickerScreen(
@@ -486,6 +491,7 @@ internal fun OverlayEditorScreen(
             onSave = { saveAll() },
             onPopupDismissed = { syncGlobalsFromActive() },
             openDefaultFontPicker = openDefaultFontPicker,
+            onShowElements = { showElementList = true },
         )
     }
 

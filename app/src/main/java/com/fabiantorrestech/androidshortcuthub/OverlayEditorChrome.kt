@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ internal fun EditorTopBar(
     onSave: () -> Unit,
     onPopupDismissed: () -> Unit,
     openDefaultFontPicker: () -> Unit,
+    onShowElements: () -> Unit,
 ) {
     var gridPopupOpen by remember { mutableStateOf(false) }
     var appearancePopupOpen by remember { mutableStateOf(false) }
@@ -79,6 +81,11 @@ internal fun EditorTopBar(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
         )
+        // Reaches tiles the preview makes hard to hit - anything 1x1 on a large grid, and the
+        // types that draw little of themselves.
+        IconButton(onClick = onShowElements) {
+            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "Elements")
+        }
         Box {
             IconButton(onClick = { appearancePopupOpen = true }) {
                 Icon(Icons.Default.FormatSize, contentDescription = "Default App Text Settings")

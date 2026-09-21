@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -131,21 +132,39 @@ internal fun OverlayTileInspector(
             ) { Text("Revert this tile") }
         }
 
-        // ── Rename (not available for sliders) ──────────────────────────────
+        // ── Name ─────────────────────────────────────────────────────────────
+        // The field used to be a single generic "Custom label" offered to every type except
+        // sliders, which was misleading in both directions. Widgets, scrollboxes and widget stacks
+        // never draw their label on the overlay, so naming one looked like it did nothing; sliders
+        // *do* draw theirs in move mode but had no field at all. The label is still doing real work
+        // for the types that do not render it - it is the tile's contentDescription for TalkBack,
+        // and it names the tile in the editor - so it is kept and described honestly instead.
         var labelDraft by remember(tile.id) { mutableStateOf(tile.customLabel ?: "") }
-        if (tile !is SystemSliderTileState) {
-            OutlinedTextField(
-                value = labelDraft,
-                onValueChange = {
-                    labelDraft = it
-                    editorState.updateTile(tile.id) { t -> t.copyWithLabel(it.trim().ifBlank { null }) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Custom label") },
-                placeholder = { Text("Use default name") },
-                singleLine = true,
-            )
-        }
+        val labelIsDrawnOnTile = tile is AppTileState || tile is IntentTileState
+        val appLabelHidden = tile is AppTileState &&
+            tile.iconConfig.source != AppTileIconSource.NONE &&
+            !tile.iconConfig.showLabel
+        OutlinedTextField(
+            value = labelDraft,
+            onValueChange = {
+                labelDraft = it
+                editorState.updateTile(tile.id) { t -> t.copyWithLabel(it.trim().ifBlank { null }) }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(if (labelIsDrawnOnTile) "Label" else "Name") },
+            placeholder = { Text("Use default name") },
+            singleLine = true,
+            supportingText = {
+                Text(
+                    when {
+                        appLabelHidden ->
+                            "Currently hidden — turn on \"Show label\" below to draw it on the tile."
+                        labelIsDrawnOnTile -> "Shown on the tile."
+                        else -> "Used in the editor and read out by TalkBack. Not drawn on the tile."
+                    },
+                )
+            },
+        )
 
         // ── Position and size ────────────────────────────────────────────────
         TileTransformControls(editorState = editorState, tile = tile)
@@ -311,18 +330,66 @@ internal fun OverlayTileInspector(
                         },
                     )
                 }
+                // The interval itself is set in the stack editor, alongside the widgets it pages
+                // through. Say what it currently is so the switch is not an opaque on/off.
+                if (tile.autoRotate) {
+                    Text(
+                        "Every ${tile.autoRotateSeconds}s — change in \"Edit stack\".",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
         // ── Delete ────────────────────────────────────────────────────────────
+        // Confirmed, because deleting a container throws away everything inside it and there is no
+        // undo short of leaving the editor without saving.
+        var confirmDelete by remember(tile.id) { mutableStateOf(false) }
         Button(
-            onClick = { editorState.deleteTile(tile.id) },
+            onClick = { confirmDelete = true },
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
             ),
         ) { Text("Delete tile") }
+
+        if (confirmDelete) {
+            val childCount = when (tile) {
+                is ScrollBoxTileState -> tile.children.size
+                is WidgetStackTileState -> tile.widgets.size
+                else -> 0
+            }
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("Delete ${tile.displayLabel}?") },
+                text = {
+                    Text(
+                        if (childCount > 0) {
+                            "This also deletes the $childCount ${if (childCount == 1) "tile" else "tiles"} inside it."
+                        } else {
+                            "This removes the tile from the layout."
+                        },
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            confirmDelete = false
+                            editorState.deleteTile(tile.id)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                    ) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                },
+            )
+        }
     }
 }
 

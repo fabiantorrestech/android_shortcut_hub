@@ -263,8 +263,11 @@ private fun ManualPackageEntry(
 /**
  * Rasterises an app icon for Compose. Adaptive icons are [Drawable]s with no bitmap of their own,
  * so they have to be drawn into one rather than unwrapped.
+ *
+ * Shared with the editor preview, which draws the same icon on app tiles. Blocking - call it off
+ * the main thread.
  */
-private fun loadAppIcon(context: Context, packageName: String): ImageBitmap? {
+internal fun loadAppIcon(context: Context, packageName: String): ImageBitmap? {
     if (packageName.isBlank()) return null
     val drawable: Drawable = runCatching {
         context.packageManager.getApplicationIcon(packageName)

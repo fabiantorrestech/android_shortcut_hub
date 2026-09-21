@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -38,7 +39,11 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Android
+import androidx.compose.material.icons.rounded.Brightness6
+import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.material.icons.rounded.Accessibility
 import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Notifications
@@ -59,6 +64,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
@@ -68,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -78,6 +85,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.ExperimentalFoundationApi
 
 /**
@@ -313,16 +322,27 @@ internal fun OverlayGridPreview(
                     Box(modifier = Modifier.fillMaxSize()) {
                         when (mode) {
                             OverlayRenderMode.EditorPreview -> {
-                                // Containers show a static thumbnail; other tiles stay empty
-                                // (just the card border/background).
-                                if (tile is ScrollBoxTileState) {
-                                    ScrollBoxThumbnail(
+                                when (tile) {
+                                    is ScrollBoxTileState -> ScrollBoxThumbnail(
                                         tile = tile,
                                         defaultTextColor = defaultTextColor,
                                         modifier = Modifier.fillMaxSize(),
                                     )
-                                } else if (tile is WidgetStackTileState) {
-                                    WidgetStackThumbnail(tile = tile, modifier = Modifier.fillMaxSize())
+
+                                    is WidgetStackTileState ->
+                                        WidgetStackThumbnail(tile = tile, modifier = Modifier.fillMaxSize())
+
+                                    // App, intent, widget and slider tiles used to fall through
+                                    // here and draw nothing at all - four of the six types were
+                                    // blank rectangles, so you arranged a layout without being
+                                    // able to see what any of it was.
+                                    else -> EditorTileThumbnail(
+                                        tile = tile,
+                                        defaultTextScale = defaultTextScale,
+                                        defaultFontWeight = defaultFontWeight,
+                                        defaultTextColor = defaultTextColor,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                 }
                             }
                             OverlayRenderMode.Runtime -> {
@@ -605,6 +625,109 @@ internal fun widgetProviderLabel(
  * Placeholder shown for widget tiles where a real widget cannot be rendered (EditorPreview, or a
  * broken/unavailable binding at runtime).
  */
+/**
+ * What an app, intent, widget or slider tile looks like in the editor preview.
+ *
+ * These four types previously rendered nothing in [OverlayRenderMode.EditorPreview] - just the
+ * card's border and fill - so the editor showed a grid of blank rectangles and the only way to tell
+ * tiles apart was to select one and read the inspector. Widgets in particular appeared not to be
+ * there at all.
+ *
+ * Deliberately static and cheap: no live widget hosting, no icon packs, no fonts. It has to say
+ * *what this tile is* at a glance, not be a faithful render.
+ */
+@Composable
+private fun EditorTileThumbnail(
+    tile: TileState,
+    defaultTextScale: Float,
+    defaultFontWeight: FontWeight,
+    defaultTextColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+
+    val appIcon: ImageBitmap? = if (tile is AppTileState) {
+        val packageName = tile.app.packageName
+        produceState<ImageBitmap?>(initialValue = null, packageName) {
+            value = runCatching {
+                withContext(Dispatchers.IO) { loadAppIcon(context, packageName) }
+            }.getOrNull()
+        }.value
+    } else {
+        null
+    }
+
+    val caption: String = when (tile) {
+        is AppTileState, is IntentTileState -> tile.displayLabel
+        is WidgetTileState -> remember(tile.providerComponent) {
+            widgetProviderLabel(context, tile.providerComponent, available = true).text
+        }
+        is SystemSliderTileState -> tile.displayLabel
+        else -> tile.displayLabel
+    }
+
+    Box(modifier = modifier.padding(4.dp), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            when (tile) {
+                is AppTileState -> if (appIcon != null) {
+                    Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.size(22.dp))
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Android,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = defaultTextColor,
+                    )
+                }
+
+                is IntentTileState -> Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = defaultTextColor,
+                )
+
+                is WidgetTileState -> Icon(
+                    imageVector = Icons.Rounded.Widgets,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = defaultTextColor,
+                )
+
+                is SystemSliderTileState -> Icon(
+                    imageVector = if (tile.config.sliderType == SliderType.VOLUME) {
+                        Icons.AutoMirrored.Rounded.VolumeUp
+                    } else {
+                        Icons.Rounded.Brightness6
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = defaultTextColor,
+                )
+
+                else -> Unit
+            }
+
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = MaterialTheme.typography.labelSmall.fontSize *
+                        (tile.customTextScale ?: defaultTextScale),
+                ),
+                color = defaultTextColor,
+                fontWeight = tile.customBoldText?.let { if (it) FontWeight.Bold else FontWeight.Normal }
+                    ?: defaultFontWeight,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 @Composable
 internal fun WidgetPlaceholder(tile: WidgetTileState, modifier: Modifier = Modifier) {
     val context = LocalContext.current
