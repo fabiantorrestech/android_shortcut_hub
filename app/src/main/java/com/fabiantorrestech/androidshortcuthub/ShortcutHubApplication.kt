@@ -39,8 +39,21 @@ class ShortcutHubApplication : Application() {
         if (overlayRuntimePrepared) return
         synchronized(this) {
             if (overlayRuntimePrepared) return
+            // Deliberately NOT startListening() here. The host is ref-counted, and the Application
+            // used to register itself as a listener that was never removed - which kept the host
+            // listening for the life of the process, so every bound widget pushed its updates into
+            // the app (an IPC, a process wake and a view inflation each) while nothing was on
+            // screen. Clock widgets alone tick every minute.
+            //
+            // Each overlay host now owns listening for exactly as long as it is visible, and that
+            // loses nothing:
+            //  - on show, the 0 -> 1 listener transition calls AppWidgetHost.startListening(), which
+            //    returns and applies every update published while nobody was listening - the
+            //    refresh on invoke;
+            //  - while visible, it stays registered, so updates arrive live;
+            //  - a view created for the first time fetches its current content itself, via
+            //    getAppWidgetViews() inside createView(), so a cold first open is fresh too.
             val widgetHost = ShortcutHubWidgetHost.getInstance(this)
-            widgetHost.startListening(this)
             cleanOrphanWidgetIds(widgetHost)
             warmOverlayServiceIfEligible()
             overlayRuntimePrepared = true
