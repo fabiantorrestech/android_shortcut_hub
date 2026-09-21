@@ -97,6 +97,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * The app's top-level tabs, in display order.
+ *
+ * Named rather than indexed: tabs used to be raw Ints, with the layout editor hard-coded as 3 in
+ * two places and a comment warning that inserting a tab would silently break both. Removing the
+ * Grayscale tab did shift every index after it - with names, nothing else had to change.
+ */
+private enum class MainTab(val title: String) {
+    SETUP("Setup"),
+    BEHAVIOR("Behavior"),
+    LAYOUT("Layout"),
+    BACKUP("Backup"),
+    TRIGGERS("Triggers"),
+}
+
 @Composable
 fun MainScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -107,10 +122,9 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(isIgnoringBatteryOptimizationRestrictions(context)) }
     var hasWriteSettingsPermission by remember { mutableStateOf(android.provider.Settings.System.canWrite(context)) }
     var config by remember { mutableStateOf(ShortcutHubSettings.load(context)) }
-    var grayscaleConfig by remember { mutableStateOf(GrayscaleRepository.load(context)) }
     var triggerConfig by remember { mutableStateOf(TriggerRepository.load(context)) }
     var settingsMessage by remember { mutableStateOf<String?>(null) }
-    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(MainTab.SETUP) }
 
     /**
      * Tabs the user came through, most recent last, so system back unwinds one level per press
@@ -119,17 +133,18 @@ fun MainScreen(modifier: Modifier = Modifier) {
      * session runs, and means back never walks the same tab twice in a row.
      */
     val tabBackStack = rememberSaveable(
+        // Saved by name rather than by the enum itself: a String is unambiguously Bundle-safe.
         saver = listSaver(
-            save = { it.toList() },
-            restore = { it.toMutableStateList() },
+            save = { stack -> stack.map { it.name } },
+            restore = { names -> names.map(MainTab::valueOf).toMutableStateList() },
         ),
-    ) { mutableStateListOf<Int>() }
+    ) { mutableStateListOf<MainTab>() }
 
-    fun navigateToTab(index: Int) {
-        if (index == selectedTab) return
+    fun navigateToTab(tab: MainTab) {
+        if (tab == selectedTab) return
         tabBackStack.remove(selectedTab)
         tabBackStack.add(selectedTab)
-        selectedTab = index
+        selectedTab = tab
         settingsMessage = null
     }
 
@@ -319,30 +334,27 @@ fun MainScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        if (selectedTab != 3) {
+        if (selectedTab != MainTab.LAYOUT) {
             Text(
                 text = "Shortcut Hub",
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             )
             PrimaryScrollableTabRow(
-                selectedTabIndex = selectedTab,
+                selectedTabIndex = selectedTab.ordinal,
                 edgePadding = 0.dp,
             ) {
-                // "Triggers" is appended rather than inserted: the header visibility check above
-                // and LayoutTab's onBack both hard-code index 3 for the layout editor, so shifting
-                // any existing index would silently break both.
-                listOf("Setup", "Behavior", "Grayscale", "Layout", "Backup", "Triggers").forEachIndexed { index, title ->
+                MainTab.entries.forEach { tab ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { navigateToTab(index) },
-                        text = { Text(title) },
+                        selected = selectedTab == tab,
+                        onClick = { navigateToTab(tab) },
+                        text = { Text(tab.title) },
                     )
                 }
             }
         }
         when (selectedTab) {
-            0 -> SetupTab(
+            MainTab.SETUP -> SetupTab(
                 hasOverlayPermission = hasOverlayPermission,
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
@@ -379,7 +391,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     )
                 },
             )
-            1 -> BehaviorTab(
+            MainTab.BEHAVIOR -> BehaviorTab(
                 config = config,
                 onConfigChange = { updated ->
                     config = updated
@@ -387,17 +399,11 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 },
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
             )
-            2 -> GrayscaleTab(
-                grayscaleConfig = grayscaleConfig,
-                onConfigChange = { updated ->
-                    grayscaleConfig = updated
-                    GrayscaleRepository.save(context, updated)
-                },
-            )
-            3 -> LayoutTab(
+            MainTab.LAYOUT -> LayoutTab(
                 // Returns to whichever tab the editor was opened from, rather than always Setup.
                 onBack = {
-                    selectedTab = if (tabBackStack.isEmpty()) 0 else tabBackStack.removeAt(tabBackStack.lastIndex)
+                    selectedTab =
+                        if (tabBackStack.isEmpty()) MainTab.SETUP else tabBackStack.removeAt(tabBackStack.lastIndex)
                     settingsMessage = null
                 },
                 onOpenFontPicker = { tileId ->
@@ -426,7 +432,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     ShortcutHubSettings.save(context, config)
                 },
             )
-            4 -> BackupTab(
+            MainTab.BACKUP -> BackupTab(
                 statusMessage = settingsMessage,
                 autoBackupEnabled = autoBackupEnabled,
                 autoBackupDirectoryUri = autoBackupDirectoryUri,
@@ -444,7 +450,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     importLauncher.launch(arrayOf("application/json", "*/*"))
                 },
             )
-            5 -> TriggersTab(
+            MainTab.TRIGGERS -> TriggersTab(
                 triggerConfig = triggerConfig,
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
                 onTriggerConfigChange = { updated ->
@@ -978,304 +984,6 @@ private fun LayoutTab(
     )
 }
 
-@Composable
-private fun GrayscaleTab(
-    grayscaleConfig: GrayscaleConfig,
-    onConfigChange: (GrayscaleConfig) -> Unit,
-) {
-    val context = LocalContext.current
-    var showAppChooser by remember { mutableStateOf(false) }
-    var availableApps by remember { mutableStateOf<List<GrayscaleAppEntry>>(emptyList()) }
-    var isLoadingApps by remember { mutableStateOf(false) }
-    var appSearchQuery by remember { mutableStateOf("") }
-
-    val installedPackages = remember {
-        context.packageManager.getInstalledApplications(0).map { it.packageName }.toSet()
-    }
-
-    val activeList = when (grayscaleConfig.activeMode) {
-        GrayscaleFilterMode.WHITELIST -> grayscaleConfig.whitelistApps
-        GrayscaleFilterMode.BLACKLIST -> grayscaleConfig.blacklistApps
-    }
-    val activePackages = remember(activeList) { activeList.map { it.packageName }.toSet() }
-
-    val filteredForChooser = remember(availableApps, activePackages, appSearchQuery) {
-        val q = appSearchQuery.trim()
-        availableApps
-            .filter { it.packageName !in activePackages }
-            .let { list ->
-                if (q.isEmpty()) list
-                else list.filter { a ->
-                    a.label.contains(q, ignoreCase = true) || a.packageName.contains(q, ignoreCase = true)
-                }
-            }
-    }
-
-    LaunchedEffect(showAppChooser) {
-        if (showAppChooser && availableApps.isEmpty() && !isLoadingApps) {
-            isLoadingApps = true
-            availableApps = withContext(Dispatchers.IO) {
-                context.packageManager.getInstalledApplications(0)
-                    .mapNotNull { info ->
-                        context.packageManager.getLaunchIntentForPackage(info.packageName)
-                            ?: return@mapNotNull null
-                        val label = context.packageManager.getApplicationLabel(info)
-                            ?.toString()?.ifBlank { info.packageName } ?: info.packageName
-                        GrayscaleAppEntry(packageName = info.packageName, label = label)
-                    }
-                    .sortedBy { it.label.lowercase() }
-            }
-            isLoadingApps = false
-        }
-    }
-
-    fun updateActiveList(newList: List<GrayscaleAppEntry>) {
-        onConfigChange(
-            when (grayscaleConfig.activeMode) {
-                GrayscaleFilterMode.WHITELIST -> grayscaleConfig.copy(whitelistApps = newList)
-                GrayscaleFilterMode.BLACKLIST -> grayscaleConfig.copy(blacklistApps = newList)
-            },
-        )
-    }
-
-    if (showAppChooser) {
-        AlertDialog(
-            onDismissRequest = { showAppChooser = false; appSearchQuery = "" },
-            title = {
-                Text("Add to ${if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST) "Whitelist" else "Blacklist"}")
-            },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = appSearchQuery,
-                        onValueChange = { appSearchQuery = it },
-                        label = { Text("Search") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    when {
-                        isLoadingApps -> Text(
-                            "Loading apps…",
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                        filteredForChooser.isEmpty() -> Text(
-                            if (availableApps.isEmpty()) "No apps found." else "All apps already added.",
-                            modifier = Modifier.padding(top = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        else -> LazyColumn {
-                            items(filteredForChooser, key = { it.packageName }) { app ->
-                                TextButton(
-                                    onClick = { updateActiveList(activeList + app) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(modifier = Modifier.fillMaxWidth()) {
-                                        Text(app.label, style = MaterialTheme.typography.bodyMedium)
-                                        Text(
-                                            app.packageName,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showAppChooser = false; appSearchQuery = "" }) { Text("Done") }
-            },
-        )
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        // ── Enable toggle ────────────────────────────────────────────────────
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Grayscale Background", style = MaterialTheme.typography.titleMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Enable grayscale background")
-                    Switch(
-                        checked = false,
-                        onCheckedChange = {},
-                        enabled = false,
-                    )
-                }
-                Text(
-                    "Coming soon — grayscale background is not yet available.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        if (false) {
-            // ── Capture mode ─────────────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        "Capture Mode",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = grayscaleConfig.captureMode == GrayscaleMode.SIMPLE,
-                            onClick = { onConfigChange(grayscaleConfig.copy(captureMode = GrayscaleMode.SIMPLE)) },
-                        )
-                        Column {
-                            Text("Simple (snapshot)", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "Takes a one-shot screenshot when the overlay opens. No permission dialog, no battery overhead.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = grayscaleConfig.captureMode == GrayscaleMode.ADVANCED,
-                            onClick = { onConfigChange(grayscaleConfig.copy(captureMode = GrayscaleMode.ADVANCED)) },
-                        )
-                        Column {
-                            Text("Advanced (live)", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "Streams the screen at 30 fps so the background updates in real time (e.g. maps, video). Requires a one-time screen-capture permission per app session.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── Filter mode ──────────────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        "Filter Mode",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = grayscaleConfig.activeMode == GrayscaleFilterMode.BLACKLIST,
-                            onClick = { onConfigChange(grayscaleConfig.copy(activeMode = GrayscaleFilterMode.BLACKLIST)) },
-                        )
-                        Column {
-                            Text("Blacklist", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "Listed apps appear in grayscale; all others keep their colors.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST,
-                            onClick = { onConfigChange(grayscaleConfig.copy(activeMode = GrayscaleFilterMode.WHITELIST)) },
-                        )
-                        Column {
-                            Text("Whitelist", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "Listed apps keep their colors; everything else appears in grayscale.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── App list for active profile ───────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST) "Whitelist" else "Blacklist",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        OutlinedButton(onClick = { showAppChooser = true }) { Text("+ Add App") }
-                    }
-
-                    if (activeList.isEmpty()) {
-                        Text(
-                            if (grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST)
-                                "No apps added. Add apps that should keep their colors when the overlay is open."
-                            else
-                                "No apps added. Add apps that should always appear in grayscale.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        activeList.forEach { entry ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(entry.label, style = MaterialTheme.typography.bodyMedium)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(
-                                            entry.packageName,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        if (entry.packageName !in installedPackages) {
-                                            Text(
-                                                "· not installed",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.error,
-                                            )
-                                        }
-                                    }
-                                }
-                                TextButton(
-                                    onClick = {
-                                        updateActiveList(activeList.filter { it.packageName != entry.packageName })
-                                    },
-                                ) { Text("Remove") }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Preview(showBackground = true)
 @Composable

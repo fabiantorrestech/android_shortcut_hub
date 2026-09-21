@@ -8,11 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.net.Uri
@@ -20,15 +15,12 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.util.DisplayMetrics
-import android.view.Display
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.font.FontFamily
-import androidx.annotation.RequiresApi
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -46,10 +38,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 class ShortcutHubAccessibilityService : AccessibilityService() {
     companion object {
@@ -72,16 +62,11 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         private const val SYSTEM_UI_DISMISS_GRACE_MS = 700L
 
         private val toggleRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-        private val _foregroundPackage = MutableStateFlow<String?>(null)
-        val foregroundPackage: StateFlow<String?> = _foregroundPackage.asStateFlow()
-
         private val _foregroundAppPackage = MutableStateFlow<String?>(null)
 
         /**
-         * Like [foregroundPackage], but never reports SystemUI or the framework — only real
-         * foreground apps. Kept separate because the grayscale feature depends on the existing
-         * semantics of [foregroundPackage], while per-app trigger suppression needs a value that
-         * does not change the moment the user pulls down the notification shade.
+         * The foreground app, for per-app trigger suppression. Never reports SystemUI or the
+         * framework, so it does not change the moment the user pulls down the notification shade.
          */
         val foregroundAppPackage: StateFlow<String?> = _foregroundAppPackage.asStateFlow()
 
@@ -213,11 +198,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             dismissOverlay()
         }
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (!pkg.isNullOrBlank() && pkg != packageName) {
-                _foregroundPackage.value = pkg
-                if (pkg !in NON_APP_PACKAGES) {
-                    _foregroundAppPackage.value = pkg
-                }
+            if (!pkg.isNullOrBlank() && pkg != packageName && pkg !in NON_APP_PACKAGES) {
+                _foregroundAppPackage.value = pkg
             }
         }
     }
@@ -323,37 +305,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         serviceScope.cancel()
     }
 
-    @RequiresApi(Build.VERSION_CODES.R)
-    internal suspend fun takeGrayscaleSnapshot(): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        val paint = Paint().apply {
-            colorFilter = ColorMatrixColorFilter(ColorMatrix().also { it.setSaturation(0f) })
-        }
-        return suspendCancellableCoroutine { continuation ->
-            @Suppress("NewApi")
-            takeScreenshot(
-                Display.DEFAULT_DISPLAY,
-                ContextCompat.getMainExecutor(this),
-                object : AccessibilityService.TakeScreenshotCallback {
-                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
-                        // getHardwareBitmap() exists at runtime (API 30+) but is missing from
-                        // SDK 36 compile stubs, so we access it via reflection.
-                        val hardware = runCatching {
-                            result.javaClass.getMethod("getHardwareBitmap").invoke(result) as Bitmap
-                        }.getOrNull()
-                        if (hardware == null) { continuation.resume(null); return }
-                        val soft = hardware.copy(Bitmap.Config.ARGB_8888, false)
-                        hardware.recycle()
-                        val gray = Bitmap.createBitmap(soft.width, soft.height, Bitmap.Config.ARGB_8888)
-                        Canvas(gray).drawBitmap(soft, 0f, 0f, paint)
-                        soft.recycle()
-                        continuation.resume(gray)
-                    }
-                    override fun onFailure(errorCode: Int) { continuation.resume(null) }
-                },
-            )
-        }
-    }
 
     private fun toggleOverlay() {
         if (overlayView == null) {
@@ -379,23 +330,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
-                // Load state and grayscale config concurrently — they read different prefs files.
-                val stateDeferred = async(Dispatchers.IO) {
+                val (portraitState, landscapeState) = withContext(Dispatchers.IO) {
                     OverlayStateRepository.loadBoth(this@ShortcutHubAccessibilityService)
                 }
-                val grayscaleDeferred = async(Dispatchers.IO) {
-                    GrayscaleRepository.load(this@ShortcutHubAccessibilityService)
-                }
-                val (portraitState, landscapeState) = stateDeferred.await()
-                val grayscaleConfig = grayscaleDeferred.await()
-
-                val simpleGrayscaleFrame = MutableStateFlow<Bitmap?>(null)
-                val grayscaleFrame =
-                    if (grayscaleConfig.enabled && grayscaleConfig.captureMode == GrayscaleMode.ADVANCED) {
-                        GrayscaleProjectionBroker.frame
-                    } else {
-                        simpleGrayscaleFrame
-                    }
                 val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(portraitState, landscapeState)
                 ensureWidgetHostStartedIfNeeded(portraitState)
 
@@ -456,9 +393,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                                     }
                                     if (v.isAttachedToWindow) windowManager.updateViewLayout(v, p)
                                 },
-                                grayscaleFrame = grayscaleFrame,
-                                grayscaleConfig = grayscaleConfig,
-                                foregroundPackage = foregroundPackage,
                             )
                         }
                     }
@@ -499,8 +433,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                     SystemClock.uptimeMillis() + SYSTEM_UI_DISMISS_GRACE_MS
                 windowManager.addView(composeView, params)
                 warmFontsAsync(portraitState, landscapeState)
-                initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
-                syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
             } catch (e: Exception) {
                 // Without this catch an exception here (e.g. addView, font loading, or the first
@@ -531,7 +463,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         overlayView = null
         overlayParams = null
         stopWidgetHostListeningIfNeeded()
-        GrayscaleCaptureForegroundService.pauseCapture(this)
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
@@ -552,46 +483,6 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun initializeGrayscaleAfterFirstPaint(
-        grayscaleConfig: GrayscaleConfig,
-        grayscaleFrame: MutableStateFlow<Bitmap?>,
-    ) {
-        if (!grayscaleConfig.enabled) {
-            GrayscaleCaptureForegroundService.stop(this)
-            grayscaleFrame.value = null
-            return
-        }
-
-        when (grayscaleConfig.captureMode) {
-            GrayscaleMode.SIMPLE -> {
-                serviceScope.launch {
-                    grayscaleFrame.value = takeGrayscaleSnapshot()
-                }
-            }
-            GrayscaleMode.ADVANCED -> {
-                if (GrayscaleProjectionBroker.hasProjection()) {
-                    GrayscaleCaptureForegroundService.resumeCapture(this)
-                } else {
-                    GrayscaleProjectionBroker.requestProjection(this)
-                }
-            }
-        }
-    }
-
-    private fun syncGrayscaleLabelsAsync(grayscaleConfig: GrayscaleConfig) {
-        if (!grayscaleConfig.enabled ||
-            (grayscaleConfig.whitelistApps.isEmpty() && grayscaleConfig.blacklistApps.isEmpty())
-        ) {
-            return
-        }
-
-        serviceScope.launch(Dispatchers.IO) {
-            val synced = GrayscaleRepository.syncAppLabels(this@ShortcutHubAccessibilityService, grayscaleConfig)
-            if (synced != grayscaleConfig) {
-                GrayscaleRepository.save(this@ShortcutHubAccessibilityService, synced)
-            }
-        }
-    }
 
     private fun loadLaunchableApps(): List<LaunchableApp> =
         (packageManager.getInstalledApplications(0)

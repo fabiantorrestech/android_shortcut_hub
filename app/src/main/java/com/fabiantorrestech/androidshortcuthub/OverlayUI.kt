@@ -627,9 +627,6 @@ internal fun OverlayContent(
     onPersist: (OverlayUiState, OverlayOrientation) -> Unit,
     onDismiss: () -> Unit,
     onKeyboardInputToggle: (Boolean) -> Unit = {},
-    grayscaleFrame: Flow<Bitmap?> = kotlinx.coroutines.flow.MutableStateFlow(null),
-    grayscaleConfig: GrayscaleConfig = GrayscaleConfig(),
-    foregroundPackage: Flow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
 ) {
     val configuration = LocalConfiguration.current
     val activeOrientation = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
@@ -1180,20 +1177,6 @@ internal fun OverlayContent(
         )
     }
 
-    val grayscaleBitmap by grayscaleFrame.collectAsState(initial = null)
-    val foregroundPkg by foregroundPackage.collectAsState(initial = null)
-    val whitelistPackages = remember(grayscaleConfig.whitelistApps) {
-        grayscaleConfig.whitelistApps.map { it.packageName }.toSet()
-    }
-    val blacklistPackages = remember(grayscaleConfig.blacklistApps) {
-        grayscaleConfig.blacklistApps.map { it.packageName }.toSet()
-    }
-    val shouldShowGrayscale = grayscaleBitmap != null && when {
-        foregroundPkg == null -> true
-        grayscaleConfig.activeMode == GrayscaleFilterMode.WHITELIST -> foregroundPkg !in whitelistPackages
-        else -> foregroundPkg in blacklistPackages
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1219,18 +1202,7 @@ internal fun OverlayContent(
                 }
             },
     ) {
-        // Layer 1: live grayscale capture of whatever is behind the overlay
-        if (shouldShowGrayscale) {
-            grayscaleBitmap?.let { bmp ->
-                Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.FillBounds,
-                )
-            }
-        }
-        // Layer 2: translucent tinted panel (alpha controlled in settings)
+        // Translucent backdrop behind the tiles (alpha controlled in settings)
         Box(
             modifier = Modifier
                 .fillMaxSize()

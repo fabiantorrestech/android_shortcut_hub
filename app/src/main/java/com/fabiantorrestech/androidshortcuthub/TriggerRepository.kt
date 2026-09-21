@@ -8,7 +8,7 @@ internal const val TRIGGER_PREFS_NAME = "shortcut_hub_triggers"
 internal const val TRIGGER_PREFS_KEY_CONFIG = "trigger_config"
 
 /**
- * Persists [TriggerConfig] as a single JSON blob, mirroring [GrayscaleRepository].
+ * Persists [TriggerConfig] as a single JSON blob in its own prefs file.
  *
  * Every bound check lives in [parseConfig], so a hand-edited or corrupt backup can never produce
  * a zero-size or full-screen trigger window. A parse failure falls back to defaults rather than

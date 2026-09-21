@@ -6,8 +6,8 @@ package com.fabiantorrestech.androidshortcuthub
  * Deliberately stored separately from [ShortcutHubConfig]: this feature needs ~25 scalars plus
  * two app lists, and every field added to ShortcutHubConfig costs four edits there plus a fifth
  * in BackupManager. That pattern has already drifted once (launchAnimationEnabled silently fell
- * out of backups). Following the GrayscaleConfig/GrayscaleRepository precedent instead means a
- * new field costs two edits and BackupManager never changes again.
+ * out of backups). A self-contained config with its own repository and a single JSON blob
+ * means a new field costs two edits here and BackupManager never changes again.
  */
 
 data class TriggerAppEntry(

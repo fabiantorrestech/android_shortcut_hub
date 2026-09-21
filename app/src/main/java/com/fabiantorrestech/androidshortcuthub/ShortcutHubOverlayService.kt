@@ -34,8 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 class ShortcutHubOverlayService : Service() {
@@ -172,22 +171,9 @@ class ShortcutHubOverlayService : Service() {
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
-                // Load state and grayscale config concurrently — they read different prefs files.
-                val stateDeferred = async(Dispatchers.IO) {
+                val (portraitState, landscapeState) = withContext(Dispatchers.IO) {
                     OverlayStateRepository.loadBoth(this@ShortcutHubOverlayService)
                 }
-                val grayscaleDeferred = async(Dispatchers.IO) {
-                    GrayscaleRepository.load(this@ShortcutHubOverlayService)
-                }
-                val (portraitState, landscapeState) = stateDeferred.await()
-                val grayscaleConfig = grayscaleDeferred.await()
-                val simpleGrayscaleFrame = MutableStateFlow<android.graphics.Bitmap?>(null)
-                val grayscaleFrame =
-                    if (grayscaleConfig.enabled && grayscaleConfig.captureMode == GrayscaleMode.ADVANCED) {
-                        GrayscaleProjectionBroker.frame
-                    } else {
-                        simpleGrayscaleFrame
-                    }
                 val preloadedFonts = OverlayRuntimeCache.cachedFontsFor(portraitState, landscapeState)
                 ensureWidgetHostStartedIfNeeded(portraitState)
 
@@ -246,9 +232,6 @@ class ShortcutHubOverlayService : Service() {
                                     }
                                     if (v.isAttachedToWindow) windowManager.updateViewLayout(v, p)
                                 },
-                                grayscaleFrame = grayscaleFrame,
-                                grayscaleConfig = grayscaleConfig,
-                                foregroundPackage = ShortcutHubAccessibilityService.foregroundPackage,
                             )
                         }
                     }
@@ -284,8 +267,6 @@ class ShortcutHubOverlayService : Service() {
                 overlayView = composeView
                 overlayParams = params
                 warmFontsAsync(portraitState, landscapeState)
-                initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
-                syncGrayscaleLabelsAsync(grayscaleConfig)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
             } catch (e: Exception) {
                 Log.e(TAG, "showOverlay failed", e)
@@ -312,7 +293,6 @@ class ShortcutHubOverlayService : Service() {
         overlayView = null
         overlayParams = null
         stopWidgetHostListeningIfNeeded()
-        GrayscaleCaptureForegroundService.pauseCapture(this)
     }
 
     private fun ensureWidgetHostStartedIfNeeded(state: OverlayUiState) {
@@ -333,46 +313,6 @@ class ShortcutHubOverlayService : Service() {
         }
     }
 
-    private fun initializeGrayscaleAfterFirstPaint(
-        grayscaleConfig: GrayscaleConfig,
-        grayscaleFrame: MutableStateFlow<android.graphics.Bitmap?>,
-    ) {
-        if (!grayscaleConfig.enabled) {
-            GrayscaleCaptureForegroundService.stop(this)
-            grayscaleFrame.value = null
-            return
-        }
-
-        when (grayscaleConfig.captureMode) {
-            GrayscaleMode.SIMPLE -> {
-                serviceScope.launch {
-                    grayscaleFrame.value = ShortcutHubAccessibilityService.instance?.takeGrayscaleSnapshot()
-                }
-            }
-            GrayscaleMode.ADVANCED -> {
-                if (GrayscaleProjectionBroker.hasProjection()) {
-                    GrayscaleCaptureForegroundService.resumeCapture(this)
-                } else {
-                    GrayscaleProjectionBroker.requestProjection(this)
-                }
-            }
-        }
-    }
-
-    private fun syncGrayscaleLabelsAsync(grayscaleConfig: GrayscaleConfig) {
-        if (!grayscaleConfig.enabled ||
-            (grayscaleConfig.whitelistApps.isEmpty() && grayscaleConfig.blacklistApps.isEmpty())
-        ) {
-            return
-        }
-
-        serviceScope.launch(Dispatchers.IO) {
-            val synced = GrayscaleRepository.syncAppLabels(this@ShortcutHubOverlayService, grayscaleConfig)
-            if (synced != grayscaleConfig) {
-                GrayscaleRepository.save(this@ShortcutHubOverlayService, synced)
-            }
-        }
-    }
 
     private fun loadLaunchableApps(): List<LaunchableApp> =
         (packageManager.getInstalledApplications(0)

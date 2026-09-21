@@ -94,16 +94,9 @@ object BackupManager {
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
             ?: JSONObject()
 
-        val grayscaleRaw = context
-            .getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(GRAYSCALE_PREFS_KEY_CONFIG, null)
-        val grayscaleJson = grayscaleRaw
-            ?.let { runCatching { JSONObject(it) }.getOrNull() }
-            ?: JSONObject()
-
-        // Copied verbatim like grayscale above: because trigger settings live in their own JSON
-        // blob rather than as ShortcutHubConfig fields, this passthrough never needs updating
-        // when a trigger option is added.
+        // Copied verbatim: because trigger settings live in their own JSON blob rather than as
+        // ShortcutHubConfig fields, this passthrough never needs updating when a trigger option is
+        // added.
         val triggersRaw = context
             .getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
             .getString(TRIGGER_PREFS_KEY_CONFIG, null)
@@ -121,7 +114,6 @@ object BackupManager {
             )
             put("settings", settingsJson)
             put("layout", layoutJson)
-            put("grayscale", grayscaleJson)
             put("triggers", triggersJson)
         }.toString(2)
     }
@@ -163,13 +155,8 @@ object BackupManager {
                     .apply()
             }
 
-            val grayscaleJson = root.optJSONObject("grayscale")
-            if (grayscaleJson != null && grayscaleJson.length() > 0) {
-                context.getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(GRAYSCALE_PREFS_KEY_CONFIG, grayscaleJson.toString())
-                    .apply()
-            }
+            // A "grayscale" section in backups made before that feature was removed is simply not
+            // read: every section here is optional, so older backups still restore everything else.
 
             val triggersJson = root.optJSONObject("triggers")
             if (triggersJson != null && triggersJson.length() > 0) {
