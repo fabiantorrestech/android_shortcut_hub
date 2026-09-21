@@ -147,23 +147,8 @@ internal fun OverlayTileInspector(
             )
         }
 
-        // ── Move ─────────────────────────────────────────────────────────────
-        Text("Move", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { editorState.moveTile(tile.id, -1, 0) }) { Text("↑") }
-            OutlinedButton(onClick = { editorState.moveTile(tile.id, 1, 0) }) { Text("↓") }
-            OutlinedButton(onClick = { editorState.moveTile(tile.id, 0, -1) }) { Text("←") }
-            OutlinedButton(onClick = { editorState.moveTile(tile.id, 0, 1) }) { Text("→") }
-        }
-
-        // ── Resize ───────────────────────────────────────────────────────────
-        Text("Span", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { editorState.resizeTile(tile.id, 1, 0) }) { Text("H+") }
-            OutlinedButton(onClick = { editorState.resizeTile(tile.id, -1, 0) }) { Text("H-") }
-            OutlinedButton(onClick = { editorState.resizeTile(tile.id, 0, 1) }) { Text("W+") }
-            OutlinedButton(onClick = { editorState.resizeTile(tile.id, 0, -1) }) { Text("W-") }
-        }
+        // ── Position and size ────────────────────────────────────────────────
+        TileTransformControls(editorState = editorState, tile = tile)
 
         // ── Text scale + Bold (AppTile + IntentTile only) ────────────────────
         if (tile !is WidgetTileState && tile !is SystemSliderTileState && tile !is ScrollBoxTileState && tile !is WidgetStackTileState) {

@@ -186,17 +186,37 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
      * Returns false if no valid landing position exists.
      */
     fun moveTile(id: Int, rowDelta: Int, colDelta: Int): Boolean {
-        val current = tiles.firstOrNull { it.id == id } ?: return false
+        val (row, column) = findMoveTarget(id, rowDelta, colDelta) ?: return false
+        updateTile(id) { it.copyWithPosition(row, column) }
+        return true
+    }
+
+    /**
+     * Whether [moveTile] in this direction would land anywhere, without actually moving.
+     *
+     * Lets the inspector grey out directions that are blocked instead of offering a button that
+     * silently does nothing, which is how the arrows behaved: [moveTile] already returned false in
+     * that case and every caller discarded it.
+     */
+    fun canMoveTile(id: Int, rowDelta: Int, colDelta: Int): Boolean =
+        findMoveTarget(id, rowDelta, colDelta) != null
+
+    /**
+     * The cell [moveTile] would land on, or null when the tile is against a wall with no free slot
+     * beyond the tiles in the way. Shared with [canMoveTile] so the enabled state and the move can
+     * never disagree about what is possible.
+     */
+    private fun findMoveTarget(id: Int, rowDelta: Int, colDelta: Int): Pair<Int, Int>? {
+        val current = tiles.firstOrNull { it.id == id } ?: return null
         var scanRow = current.row + rowDelta
         var scanCol = current.column + colDelta
         while (true) {
             if (scanRow < 0 || scanCol < 0 ||
                 scanRow + current.rowSpan > gridRows ||
                 scanCol + current.columnSpan > gridColumns
-            ) return false
+            ) return null
             if (!overlapsExisting(scanRow, scanCol, current.rowSpan, current.columnSpan, excludeId = id)) {
-                updateTile(id) { it.copyWithPosition(scanRow, scanCol) }
-                return true
+                return scanRow to scanCol
             }
             scanRow += rowDelta
             scanCol += colDelta
@@ -208,14 +228,27 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
      * Returns false if the resulting span would be invalid or overlapping.
      */
     fun resizeTile(id: Int, rowSpanDelta: Int, colSpanDelta: Int): Boolean {
-        val current = tiles.firstOrNull { it.id == id } ?: return false
+        val (rowSpan, colSpan) = findResizeSpan(id, rowSpanDelta, colSpanDelta) ?: return false
+        updateTile(id) { it.copyWithSpan(rowSpan, colSpan) }
+        return true
+    }
+
+    /** Whether [resizeTile] would succeed, without actually resizing. See [canMoveTile]. */
+    fun canResizeTile(id: Int, rowSpanDelta: Int, colSpanDelta: Int): Boolean =
+        findResizeSpan(id, rowSpanDelta, colSpanDelta) != null
+
+    /**
+     * The span [resizeTile] would apply, or null when the result would be off-grid, overlapping, or
+     * no change at all. Resize is anchored top-left and grows down and right only.
+     */
+    private fun findResizeSpan(id: Int, rowSpanDelta: Int, colSpanDelta: Int): Pair<Int, Int>? {
+        val current = tiles.firstOrNull { it.id == id } ?: return null
         val newRowSpan = (current.rowSpan + rowSpanDelta).coerceAtLeast(1)
         val newColSpan = (current.columnSpan + colSpanDelta).coerceAtLeast(1)
-        if (newRowSpan == current.rowSpan && newColSpan == current.columnSpan) return false
-        if (current.row + newRowSpan > gridRows || current.column + newColSpan > gridColumns) return false
-        if (overlapsExisting(current.row, current.column, newRowSpan, newColSpan, excludeId = id)) return false
-        updateTile(id) { it.copyWithSpan(newRowSpan, newColSpan) }
-        return true
+        if (newRowSpan == current.rowSpan && newColSpan == current.columnSpan) return null
+        if (current.row + newRowSpan > gridRows || current.column + newColSpan > gridColumns) return null
+        if (overlapsExisting(current.row, current.column, newRowSpan, newColSpan, excludeId = id)) return null
+        return newRowSpan to newColSpan
     }
 
     /**

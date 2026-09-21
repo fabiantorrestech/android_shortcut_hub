@@ -2015,12 +2015,21 @@ private fun TileEditSheet(
                         )
                     }
 
-                    // Resize
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = { onResizeWidth(1) }) { Text("W+") }
-                        OutlinedButton(onClick = { onResizeWidth(-1) }) { Text("W-") }
-                        OutlinedButton(onClick = { onResizeHeight(1) }) { Text("H+") }
-                        OutlinedButton(onClick = { onResizeHeight(-1) }) { Text("H-") }
+                    // Resize. Same labelled steppers the in-app editor's inspector uses, rather
+                    // than the old "W+ W- H+ H-" text buttons, so the two inspectors match.
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SpanStepper(
+                            label = "Width",
+                            value = tile.columnSpan,
+                            onDecrease = { onResizeWidth(-1) },
+                            onIncrease = { onResizeWidth(1) },
+                        )
+                        SpanStepper(
+                            label = "Height",
+                            value = tile.rowSpan,
+                            onDecrease = { onResizeHeight(-1) },
+                            onIncrease = { onResizeHeight(1) },
+                        )
                     }
 
                     // Text scale + bold (label/intent tiles only)
