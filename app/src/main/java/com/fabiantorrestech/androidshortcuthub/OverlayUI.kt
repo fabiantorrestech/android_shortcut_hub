@@ -909,6 +909,16 @@ internal fun OverlayContent(
     fun applyIntentForm() {
         val action = intentActionDraft.trim()
         if (action.isEmpty()) { intentFormError = "Action is required"; return }
+        // Catches a mistyped class and, just as often, an Activity-typed tile aimed at a
+        // BroadcastReceiver. Both used to save cleanly and then fail silently at tap time.
+        val componentProblem = describeIntentTargetProblem(
+            context = context,
+            rawComponent = intentComponentDraft,
+            rawPackage = intentPackageDraft,
+            type = intentTypeDraft,
+        )
+        if (componentProblem != null) { intentFormError = componentProblem; return }
+        val component = normalizeIntentComponent(intentComponentDraft, intentPackageDraft)
         val extras = intentExtrasDraft.filter { (k, _) -> k.isNotBlank() }.toMap()
 
         val editId = editingIntentTileId
@@ -920,7 +930,7 @@ internal fun OverlayContent(
                     intentAction = action,
                     intentType = intentTypeDraft,
                     intentPackage = intentPackageDraft.trim().ifBlank { null },
-                    intentComponent = intentComponentDraft.trim().ifBlank { null },
+                    intentComponent = component,
                     intentDataUri = intentDataUriDraft.trim().ifBlank { null },
                     intentExtras = extras,
                 )
@@ -936,7 +946,7 @@ internal fun OverlayContent(
                 intentAction = action,
                 intentType = intentTypeDraft,
                 intentPackage = intentPackageDraft.trim().ifBlank { null },
-                intentComponent = intentComponentDraft.trim().ifBlank { null },
+                intentComponent = component,
                 intentDataUri = intentDataUriDraft.trim().ifBlank { null },
                 intentExtras = extras,
             )

@@ -11,7 +11,13 @@ class InvokeShortcutHubActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (!ShortcutHubOverlayService.canDrawOverlays(this)) {
+        // Mirrors the ordering inside routeShortcutHubToggle: when the accessibility host is the
+        // one that will render, SYSTEM_ALERT_WINDOW is irrelevant, so don't bounce the user to a
+        // permission screen they never need.
+        val usingAccessibilityHost = ShortcutHubSettings.load(this).useAccessibilityService &&
+            ShortcutHubAccessibilityService.isConnected
+
+        if (!usingAccessibilityHost && !ShortcutHubOverlayService.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.overlay_permission_needed, Toast.LENGTH_LONG).show()
             startActivity(
                 Intent(

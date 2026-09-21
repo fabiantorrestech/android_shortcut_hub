@@ -165,6 +165,10 @@ class ShortcutHubOverlayService : Service() {
         if (overlayView != null || isShowingOverlay || !canDrawOverlays(this)) return
         isShowingOverlay = true
 
+        // Edge handles are accessibility overlays, which stack above this window type, so they
+        // have to stand down while the hub is up.
+        ShortcutHubAccessibilityService.setHubVisible(true)
+
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
@@ -286,6 +290,7 @@ class ShortcutHubOverlayService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "showOverlay failed", e)
                 // Roll back any half-built overlay state so the next toggle starts clean.
+                ShortcutHubAccessibilityService.setHubVisible(false)
                 overlayLifecycleOwner?.destroy()
                 overlayLifecycleOwner = null
                 overlayView?.let {
@@ -300,6 +305,7 @@ class ShortcutHubOverlayService : Service() {
     }
 
     private fun dismissOverlay() {
+        ShortcutHubAccessibilityService.setHubVisible(false)
         overlayLifecycleOwner?.destroy()
         overlayLifecycleOwner = null
         overlayView?.let { if (it.isAttachedToWindow) windowManager.removeViewImmediate(it) }
@@ -408,8 +414,10 @@ class ShortcutHubOverlayService : Service() {
     private fun launchIntent(tile: IntentTileState) {
         val intent = Intent(tile.intentAction).apply {
             tile.intentPackage?.let { setPackage(it) }
-            tile.intentComponent?.let { comp ->
-                ComponentName.unflattenFromString(comp)?.let { component = it }
+            // Resolves a bare class name against the tile's package too; previously
+            // anything without a "/" was silently discarded, leaving an implicit intent.
+            resolveIntentComponentName(tile.intentComponent, tile.intentPackage)?.let {
+                component = it
             }
             tile.intentDataUri?.let { data = Uri.parse(it) }
             tile.intentExtras.forEach { (k, v) -> putExtra(k, v) }

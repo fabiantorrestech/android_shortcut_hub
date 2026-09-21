@@ -1,11 +1,13 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ColorMatrix
@@ -52,9 +54,36 @@ import kotlin.coroutines.resume
 class ShortcutHubAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "ShortcutHubA11y"
+        internal const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+
+        /**
+         * Packages that are chrome rather than a foreground app. SystemUI raises window events for
+         * every shade pull, notification and lockscreen appearance, so anything keying off "which
+         * app is in front" has to exclude them or it will believe the user left the app.
+         */
+        private val NON_APP_PACKAGES = setOf(SYSTEM_UI_PACKAGE, "android")
+
+        /**
+         * How long after the overlay is added to ignore SystemUI window events. Triggers that live
+         * in SystemUI (notably the floating accessibility button) raise a window event at almost
+         * exactly the moment the overlay appears, which would otherwise make the hub dismiss
+         * itself the instant it opened.
+         */
+        private const val SYSTEM_UI_DISMISS_GRACE_MS = 700L
+
         private val toggleRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
         private val _foregroundPackage = MutableStateFlow<String?>(null)
         val foregroundPackage: StateFlow<String?> = _foregroundPackage.asStateFlow()
+
+        private val _foregroundAppPackage = MutableStateFlow<String?>(null)
+
+        /**
+         * Like [foregroundPackage], but never reports SystemUI or the framework — only real
+         * foreground apps. Kept separate because the grayscale feature depends on the existing
+         * semantics of [foregroundPackage], while per-app trigger suppression needs a value that
+         * does not change the moment the user pulls down the notification shade.
+         */
+        val foregroundAppPackage: StateFlow<String?> = _foregroundAppPackage.asStateFlow()
 
         @Volatile
         var isConnected: Boolean = false
@@ -67,6 +96,28 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         fun toggle() {
             toggleRequests.tryEmit(Unit)
         }
+
+        /**
+         * Hides the edge handles while the hub is on screen.
+         *
+         * Static because the hub may instead be hosted by [ShortcutHubOverlayService] or
+         * [LockscreenOverlayActivity], and the handles are accessibility overlays, which stack
+         * above both of those window types.
+         */
+        fun setHubVisible(visible: Boolean) {
+            instance?.edgeTriggerController?.setSuppressed(
+                EdgeTriggerController.SuppressReason.HUB_VISIBLE,
+                visible,
+            )
+        }
+
+        /**
+         * Drives the Triggers-tab live preview. Called from the settings UI, which scopes it to
+         * that tab being on screen and the app being in the foreground.
+         */
+        fun setEdgePreviewMode(active: Boolean) {
+            instance?.edgeTriggerController?.setPreviewMode(active)
+        }
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -76,6 +127,30 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
     private var widgetHostListening = false
+
+    /** See [SYSTEM_UI_DISMISS_GRACE_MS]. Volatile because it is read from onAccessibilityEvent. */
+    @Volatile
+    private var suppressSystemUiDismissUntilMs = 0L
+
+    /**
+     * Cached so nothing on an input path ever does a blocking prefs read. Refreshed by
+     * [triggerPrefsListener].
+     */
+    @Volatile
+    internal var triggerConfig: TriggerConfig = TriggerConfig()
+        private set
+
+    // Held as a field — SharedPreferences only keeps weak references to its listeners.
+    // Hops to the main thread because serviceScope is Dispatchers.Main and every WindowManager
+    // call the controller makes has to happen there.
+    private val triggerPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        serviceScope.launch { onTriggerPrefsChanged() }
+    }
+
+    private var accessibilityButtonCallback:
+        AccessibilityButtonController.AccessibilityButtonCallback? = null
+
+    private var edgeTriggerController: EdgeTriggerController? = null
 
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -102,6 +177,16 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         isConnected = true
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        triggerConfig = loadTriggerConfig()
+        runCatching {
+            getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(triggerPrefsListener)
+        }.onFailure { Log.e(TAG, "Trigger prefs listener registration failed", it) }
+        registerAccessibilityButton()
+        edgeTriggerController = EdgeTriggerController(this, windowManager, serviceScope).also {
+            runCatching { it.start(triggerConfig) }
+                .onFailure { e -> Log.e(TAG, "Edge trigger start failed", e) }
+        }
         registerReceiverCompat(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         registerReceiverCompat(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
         serviceScope.launch {
@@ -119,15 +204,20 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val pkg = event?.packageName?.toString()
+
         if (overlayView != null &&
-            event?.packageName?.toString() == "com.android.systemui"
+            pkg == SYSTEM_UI_PACKAGE &&
+            SystemClock.uptimeMillis() >= suppressSystemUiDismissUntilMs
         ) {
             dismissOverlay()
         }
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString()
             if (!pkg.isNullOrBlank() && pkg != packageName) {
                 _foregroundPackage.value = pkg
+                if (pkg !in NON_APP_PACKAGES) {
+                    _foregroundAppPackage.value = pkg
+                }
             }
         }
     }
@@ -142,6 +232,62 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         tearDownServiceState()
         super.onDestroy()
+    }
+
+    private fun loadTriggerConfig(): TriggerConfig =
+        runCatching { TriggerRepository.load(this) }
+            .onFailure { Log.e(TAG, "Trigger config load failed", it) }
+            .getOrDefault(TriggerConfig())
+
+    private fun onTriggerPrefsChanged() {
+        val loaded = loadTriggerConfig()
+        triggerConfig = loaded
+        runCatching { edgeTriggerController?.reloadConfig(loaded) }
+            .onFailure { Log.e(TAG, "Edge trigger reload failed", it) }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Rotation, fold, density and font-scale changes all invalidate the handle geometry.
+        runCatching { edgeTriggerController?.onConfigurationChanged() }
+            .onFailure { Log.e(TAG, "Edge trigger reconfigure failed", it) }
+    }
+
+    /**
+     * Subscribes to the system accessibility button.
+     *
+     * Because the service declares flagRequestAccessibilityButton (see
+     * res/xml/accessibility_service_config.xml) this one callback also receives the volume-key
+     * accessibility shortcut and the multi-finger swipe gesture, not just taps on the floating or
+     * navigation-bar button. The system owns the affordance entirely, which is why it costs no
+     * screen real estate and cannot collide with navigation gestures.
+     */
+    private fun registerAccessibilityButton() {
+        val controller = runCatching { accessibilityButtonController }.getOrNull() ?: return
+        val callback = object : AccessibilityButtonController.AccessibilityButtonCallback() {
+            override fun onClicked(controller: AccessibilityButtonController) {
+                // Deliberately NOT gated on an in-app toggle. Assigning the shortcut in Android's
+                // own accessibility settings is already the user's opt-in, and a second in-app
+                // switch just produced a shortcut that buzzed and then did nothing.
+                fireShortcutHubTrigger(
+                    this@ShortcutHubAccessibilityService,
+                    TriggerSource.A11Y_BUTTON,
+                    triggerConfig.refireCooldownMs,
+                )
+            }
+
+            override fun onAvailabilityChanged(
+                controller: AccessibilityButtonController,
+                available: Boolean,
+            ) {
+                // Some devices never render a software accessibility affordance, and a foreground
+                // app hiding navigation can take it away temporarily.
+                Log.d(TAG, "Accessibility button availability changed: $available")
+            }
+        }
+        runCatching { controller.registerAccessibilityButtonCallback(callback) }
+            .onSuccess { accessibilityButtonCallback = callback }
+            .onFailure { Log.e(TAG, "Accessibility button registration failed", it) }
     }
 
     private fun registerReceiverCompat(receiver: BroadcastReceiver, filter: IntentFilter) {
@@ -160,6 +306,19 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
             isConnected = false
             instance = null
         }
+        accessibilityButtonCallback?.let { callback ->
+            runCatching {
+                accessibilityButtonController.unregisterAccessibilityButtonCallback(callback)
+            }
+        }
+        accessibilityButtonCallback = null
+        runCatching {
+            getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(triggerPrefsListener)
+        }
+        runCatching { edgeTriggerController?.stop() }
+            .onFailure { Log.e(TAG, "Edge trigger teardown failed", it) }
+        edgeTriggerController = null
         dismissOverlay()
         serviceScope.cancel()
     }
@@ -207,6 +366,15 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private fun showOverlay() {
         if (overlayView != null || isShowingOverlay) return
         isShowingOverlay = true
+
+        // Arm the grace window before the async state load, so a SystemUI-hosted trigger (the
+        // floating accessibility button) can't have its own window event dismiss the overlay it
+        // just asked for. Re-armed again just before addView so a slow cold load doesn't eat it.
+        suppressSystemUiDismissUntilMs = SystemClock.uptimeMillis() + SYSTEM_UI_DISMISS_GRACE_MS
+
+        // The handles are accessibility overlays too, so without this they would float on top of
+        // the hub they just opened.
+        setHubVisible(true)
 
         serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
@@ -327,6 +495,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
 
                 overlayView = composeView
                 overlayParams = params
+                suppressSystemUiDismissUntilMs =
+                    SystemClock.uptimeMillis() + SYSTEM_UI_DISMISS_GRACE_MS
                 windowManager.addView(composeView, params)
                 warmFontsAsync(portraitState, landscapeState)
                 initializeGrayscaleAfterFirstPaint(grayscaleConfig, simpleGrayscaleFrame)
@@ -339,6 +509,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 // into a continuous "app keeps stopping" loop. Log and roll back any half-built
                 // overlay state so the next toggle starts clean instead of re-crashing or wedging.
                 Log.e(TAG, "showOverlay failed", e)
+                setHubVisible(false)
                 overlayLifecycleOwner?.destroy()
                 overlayLifecycleOwner = null
                 overlayView?.let {
@@ -353,6 +524,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     }
 
     private fun dismissOverlay() {
+        setHubVisible(false)
         overlayLifecycleOwner?.destroy()
         overlayLifecycleOwner = null
         overlayView?.let { if (it.isAttachedToWindow) windowManager.removeViewImmediate(it) }
@@ -445,8 +617,10 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private fun launchIntent(tile: IntentTileState) {
         val intent = Intent(tile.intentAction).apply {
             tile.intentPackage?.let { setPackage(it) }
-            tile.intentComponent?.let { comp ->
-                ComponentName.unflattenFromString(comp)?.let { component = it }
+            // Resolves a bare class name against the tile's package too; previously
+            // anything without a "/" was silently discarded, leaving an implicit intent.
+            resolveIntentComponentName(tile.intentComponent, tile.intentPackage)?.let {
+                component = it
             }
             tile.intentDataUri?.let { data = Uri.parse(it) }
             tile.intentExtras.forEach { (k, v) -> putExtra(k, v) }

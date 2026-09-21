@@ -85,6 +85,8 @@ object BackupManager {
             put("dismissAccessibilityBanner", config.dismissAccessibilityBanner)
             put("useAccessibilityService", config.useAccessibilityService)
             put("dismissOnScreenOff", config.dismissOnScreenOff)
+            // Was missing here and in restoreFromJson, so every restore silently reset it to true.
+            put("launchAnimationEnabled", config.launchAnimationEnabled)
             put("dismissOnWidgetActivity", config.dismissOnWidgetActivity)
         }
 
@@ -99,6 +101,16 @@ object BackupManager {
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
             ?: JSONObject()
 
+        // Copied verbatim like grayscale above: because trigger settings live in their own JSON
+        // blob rather than as ShortcutHubConfig fields, this passthrough never needs updating
+        // when a trigger option is added.
+        val triggersRaw = context
+            .getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(TRIGGER_PREFS_KEY_CONFIG, null)
+        val triggersJson = triggersRaw
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: JSONObject()
+
         return JSONObject().apply {
             put("version", 1)
             put(
@@ -110,6 +122,7 @@ object BackupManager {
             put("settings", settingsJson)
             put("layout", layoutJson)
             put("grayscale", grayscaleJson)
+            put("triggers", triggersJson)
         }.toString(2)
     }
 
@@ -137,6 +150,7 @@ object BackupManager {
                 dismissAccessibilityBanner = s.optBoolean("dismissAccessibilityBanner", false),
                 useAccessibilityService = s.optBoolean("useAccessibilityService", false),
                 dismissOnScreenOff = s.optBoolean("dismissOnScreenOff", true),
+                launchAnimationEnabled = s.optBoolean("launchAnimationEnabled", true),
                 dismissOnWidgetActivity = s.optBoolean("dismissOnWidgetActivity", false),
             )
             ShortcutHubSettings.save(context, config)
@@ -154,6 +168,14 @@ object BackupManager {
                 context.getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString(GRAYSCALE_PREFS_KEY_CONFIG, grayscaleJson.toString())
+                    .apply()
+            }
+
+            val triggersJson = root.optJSONObject("triggers")
+            if (triggersJson != null && triggersJson.length() > 0) {
+                context.getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(TRIGGER_PREFS_KEY_CONFIG, triggersJson.toString())
                     .apply()
             }
             true

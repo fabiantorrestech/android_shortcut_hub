@@ -674,6 +674,7 @@ private fun InlineIntentForm(
     var newExtraKey by remember { mutableStateOf("") }
     var newExtraValue by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    val componentCheckContext = LocalContext.current
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Edit intent", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -712,7 +713,7 @@ private fun InlineIntentForm(
             value = component,
             onValueChange = { component = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Component (optional)") },
+            label = { Text("Component / Class (optional)") },
             singleLine = true,
         )
         OutlinedTextField(
@@ -778,12 +779,19 @@ private fun InlineIntentForm(
                 onClick = {
                     val trimmedAction = action.trim()
                     if (trimmedAction.isEmpty()) { error = "Action is required"; return@Button }
+                    val componentProblem = describeIntentTargetProblem(
+                        context = componentCheckContext,
+                        rawComponent = component,
+                        rawPackage = pkg,
+                        type = intentType,
+                    )
+                    if (componentProblem != null) { error = componentProblem; return@Button }
                     onSave(
                         initial.copy(
                             intentAction = trimmedAction,
                             intentType = intentType,
                             intentPackage = pkg.trim().ifBlank { null },
-                            intentComponent = component.trim().ifBlank { null },
+                            intentComponent = normalizeIntentComponent(component, pkg),
                             intentDataUri = dataUri.trim().ifBlank { null },
                             intentExtras = extras.filter { it.first.isNotBlank() }.toMap(),
                         ),

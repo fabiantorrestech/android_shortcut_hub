@@ -59,6 +59,8 @@ class LockscreenOverlayActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instanceRef = WeakReference(this)
+        // Edge handles are accessibility overlays, which stack above this activity.
+        ShortcutHubAccessibilityService.setHubVisible(true)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -143,6 +145,7 @@ class LockscreenOverlayActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        ShortcutHubAccessibilityService.setHubVisible(false)
         unregisterReceiver(screenOffReceiver)
         unregisterReceiver(systemUiDismissReceiver)
         stopWidgetHostListeningIfNeeded()
@@ -247,8 +250,10 @@ class LockscreenOverlayActivity : ComponentActivity() {
     private fun launchIntent(tile: IntentTileState) {
         val intent = Intent(tile.intentAction).apply {
             tile.intentPackage?.let { setPackage(it) }
-            tile.intentComponent?.let { comp ->
-                ComponentName.unflattenFromString(comp)?.let { component = it }
+            // Resolves a bare class name against the tile's package too; previously
+            // anything without a "/" was silently discarded, leaving an implicit intent.
+            resolveIntentComponentName(tile.intentComponent, tile.intentPackage)?.let {
+                component = it
             }
             tile.intentDataUri?.let { data = Uri.parse(it) }
             tile.intentExtras.forEach { (k, v) -> putExtra(k, v) }

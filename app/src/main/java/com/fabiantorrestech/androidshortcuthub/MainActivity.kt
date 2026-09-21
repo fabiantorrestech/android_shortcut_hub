@@ -30,6 +30,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,6 +106,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var hasWriteSettingsPermission by remember { mutableStateOf(android.provider.Settings.System.canWrite(context)) }
     var config by remember { mutableStateOf(ShortcutHubSettings.load(context)) }
     var grayscaleConfig by remember { mutableStateOf(GrayscaleRepository.load(context)) }
+    var triggerConfig by remember { mutableStateOf(TriggerRepository.load(context)) }
     var settingsMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
@@ -201,11 +208,15 @@ fun MainScreen(modifier: Modifier = Modifier) {
     }
 
     val intentDetails = remember(context.packageName) {
+        val invokeClass = "${context.packageName}.InvokeShortcutHubActivity"
         listOf(
-            "Action: ${ShortcutHubOverlayService.ACTION_TOGGLE_OVERLAY}",
-            "Package: ${context.packageName}",
-            "Class: ${context.packageName}.InvokeShortcutHubActivity",
-            "Tasker target: Activity",
+            "Action" to ShortcutHubOverlayService.ACTION_TOGGLE_OVERLAY,
+            "Package" to context.packageName,
+            "Class" to invokeClass,
+            // The flattened form, because Shortcut Hub's own Component / Class field wants
+            // package/class — pasting the bare class above into it is a common mistake.
+            "Component" to "${context.packageName}/$invokeClass",
+            "Tasker target" to "Activity",
         )
     }
 
@@ -218,6 +229,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizationRestrictions(context)
                 hasWriteSettingsPermission = android.provider.Settings.System.canWrite(context)
                 config = ShortcutHubSettings.load(context)
+                triggerConfig = TriggerRepository.load(context)
             }
         }
         lifecycle.addObserver(observer)
@@ -287,7 +299,10 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 selectedTabIndex = selectedTab,
                 edgePadding = 0.dp,
             ) {
-                listOf("Setup", "Behavior", "Grayscale", "Layout", "Backup").forEachIndexed { index, title ->
+                // "Triggers" is appended rather than inserted: the header visibility check above
+                // and LayoutTab's onBack both hard-code index 3 for the layout editor, so shifting
+                // any existing index would silently break both.
+                listOf("Setup", "Behavior", "Grayscale", "Layout", "Backup", "Triggers").forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
                         onClick = {
@@ -330,11 +345,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 onGrantAccessibility = {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 },
-                onGrantBattery = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-                    )
-                },
+                onGrantBattery = { openBatteryOptimizationSettings(context) },
                 onGrantWriteSettings = {
                     context.startActivity(
                         Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))
@@ -402,6 +413,17 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     importLauncher.launch(arrayOf("application/json", "*/*"))
                 },
             )
+            5 -> TriggersTab(
+                triggerConfig = triggerConfig,
+                isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
+                onTriggerConfigChange = { updated ->
+                    triggerConfig = updated
+                    TriggerRepository.save(context, updated)
+                },
+                onGrantAccessibility = {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+            )
         }
     }
 }
@@ -413,7 +435,7 @@ private fun SetupTab(
     isIgnoringBatteryOptimizations: Boolean,
     hasWriteSettingsPermission: Boolean,
     config: ShortcutHubConfig,
-    intentDetails: List<String>,
+    intentDetails: List<Pair<String, String>>,
     settingsMessage: String?,
     onToggleOverlay: () -> Unit,
     onDismissAccessibilityBanner: () -> Unit,
@@ -480,7 +502,9 @@ private fun SetupTab(
                 Text("Intent Details", style = MaterialTheme.typography.titleMedium)
                 SelectionContainer {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        intentDetails.forEach { line -> Text(line) }
+                        intentDetails.forEach { (label, value) ->
+                            CopyableDetailRow(label = label, value = value)
+                        }
                     }
                 }
             }
@@ -807,8 +831,48 @@ private fun ColorModeButton(
     }
 }
 
+/**
+ * A label / value line with a copy button.
+ *
+ * The value is also wrapped in a SelectionContainer so a partial copy is still possible — these
+ * strings are long, and sometimes only the tail is wanted.
+ */
 @Composable
-private fun SettingToggleRow(
+internal fun CopyableDetailRow(label: String, value: String) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SelectionContainer {
+                Text(value, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        IconButton(
+            onClick = {
+                clipboard.setText(AnnotatedString(value))
+                // Android 13+ shows its own clipboard confirmation, so a second toast would
+                // just stack on top of the system one.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+                }
+            },
+        ) {
+            Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label")
+        }
+    }
+}
+
+@Composable
+internal fun SettingToggleRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -839,7 +903,7 @@ private fun SettingToggleRow(
 }
 
 @Composable
-private fun PermissionRow(
+internal fun PermissionRow(
     title: String,
     granted: Boolean,
     actionLabel: String,
@@ -875,7 +939,7 @@ private fun PermissionRow(
 }
 
 @Composable
-private fun PermissionStatusChip(granted: Boolean) {
+internal fun PermissionStatusChip(granted: Boolean) {
     Surface(
         shape = MaterialTheme.shapes.small,
         color = if (granted) Color(0xFFDBF5E6) else MaterialTheme.colorScheme.errorContainer,
@@ -1024,6 +1088,31 @@ private fun isShortcutHubAccessibilityServiceEnabled(context: Context): Boolean 
     return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
         .any { it.resolveInfo.serviceInfo.packageName == context.packageName &&
                 it.resolveInfo.serviceInfo.name == "${context.packageName}.ShortcutHubAccessibilityService" }
+}
+
+/**
+ * Opens the battery-optimisation exemption prompt, falling back to the full list screen.
+ *
+ * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS needs the matching permission declared, and even
+ * then some OEM builds refuse to resolve it. The list screen (ACTION_IGNORE_BATTERY_OPTIMIZATION_
+ * SETTINGS) needs no permission and is always present, so it is the safety net — the user just
+ * has to find Shortcut Hub in it themselves.
+ */
+private fun openBatteryOptimizationSettings(context: Context) {
+    val direct = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}"),
+    )
+    if (runCatching { context.startActivity(direct); true }.getOrDefault(false)) return
+
+    val listScreen = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    if (runCatching { context.startActivity(listScreen); true }.getOrDefault(false)) return
+
+    Toast.makeText(
+        context,
+        "Couldn't open battery settings — find Shortcut Hub under Settings › Apps › Battery.",
+        Toast.LENGTH_LONG,
+    ).show()
 }
 
 private fun isIgnoringBatteryOptimizationRestrictions(context: Context): Boolean {

@@ -16,15 +16,22 @@ class InvokeShortcutHubReceiver : BroadcastReceiver() {
 
 internal fun routeShortcutHubToggle(context: Context) {
     val startMs = SystemClock.elapsedRealtime()
-    if (!ShortcutHubOverlayService.canDrawOverlays(context)) {
-        Toast.makeText(context, R.string.overlay_permission_needed, Toast.LENGTH_LONG).show()
-        return
-    }
-
     val config = ShortcutHubSettings.load(context)
+
+    // The accessibility host renders into a TYPE_ACCESSIBILITY_OVERLAY window, for which the
+    // accessibility binding itself IS the permission — SYSTEM_ALERT_WINDOW is irrelevant. So this
+    // branch has to come BEFORE the canDrawOverlays gate. With the checks the other way round, a
+    // user running accessibility-only (overlay permission never granted) got a toast and nothing
+    // else on every invocation, which would have made every edge-handle gesture toast instead of
+    // opening the hub.
     if (config.useAccessibilityService && ShortcutHubAccessibilityService.isConnected) {
         Log.d("ShortcutHubRoute", "Toggle routed to accessibility service in ${SystemClock.elapsedRealtime() - startMs}ms")
         ShortcutHubAccessibilityService.toggle()
+        return
+    }
+
+    if (!ShortcutHubOverlayService.canDrawOverlays(context)) {
+        Toast.makeText(context, R.string.overlay_permission_needed, Toast.LENGTH_LONG).show()
         return
     }
 

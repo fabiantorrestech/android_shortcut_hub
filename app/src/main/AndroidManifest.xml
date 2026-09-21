@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!--
+        Required for ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to open its dialog. Without it
+        the system silently ignores the intent, which is why the Setup tab's battery button
+        appeared to do nothing.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <queries>
         <intent>
@@ -53,6 +59,28 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!--
+            Lets Shortcut Hub be chosen as the device's digital assistant, so the existing assist
+            gesture (long-press power, or the corner swipe) opens the hub.
+
+            This is an alias rather than a second intent-filter on InvokeShortcutHubActivity
+            because a manifest intent-filter cannot be turned off at runtime. Shipping the alias
+            disabled and flipping it with PackageManager.setComponentEnabledSetting is what makes
+            the setting genuinely opt-in: while it is off, Shortcut Hub does not appear in the
+            assistant picker at all.
+        -->
+        <activity-alias
+            android:name=".AssistTriggerAlias"
+            android:targetActivity=".InvokeShortcutHubActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".PickTileFontActivity"

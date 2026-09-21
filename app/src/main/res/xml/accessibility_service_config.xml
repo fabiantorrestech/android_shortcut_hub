@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    flagRequestAccessibilityButton MUST be declared here rather than set at runtime via
+    setServiceInfo: for services targeting above API 29 the runtime value is ignored.
+
+    Declaring it also changes how the system routes accessibility shortcuts. Because this app
+    targets above Q and requests the button, every shortcut activation - the navigation-bar
+    button, the floating button, the volume-key hold and the multi-finger swipe gesture - is
+    delivered to onAccessibilityButtonClicked() instead of toggling the service off and on.
+    That is what makes the volume-key shortcut usable as a hub trigger for free.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowsChanged|typeWindowStateChanged"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="false"
-    android:accessibilityFlags="flagRetrieveInteractiveWindows" />
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagRequestAccessibilityButton"
+    android:description="@string/accessibility_service_description"
+    android:summary="@string/accessibility_service_summary"
+    android:settingsActivity="com.fabiantorrestech.androidshortcuthub.MainActivity" />

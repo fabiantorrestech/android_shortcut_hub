@@ -54,6 +54,8 @@ class ShortcutHubApplication : Application() {
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         getSharedPreferences(GRAYSCALE_PREFS_NAME, Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
+        getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsChangeListener)
     }
 
     private fun scheduleAutoBackup() {

@@ -9,4 +9,7 @@
     <string name="grayscale_notification_channel_name">Shortcut Hub Grayscale</string>
     <string name="grayscale_notification_title">Grayscale background active</string>
     <string name="grayscale_notification_text">Screen is being captured to render grayscale under your shortcuts.</string>
+    <string name="accessibility_service_description">Lets Shortcut Hub draw over the status bar, appear on the lock screen, and be summoned by the accessibility button, the volume-key shortcut, or an edge gesture. Shortcut Hub does not read the contents of your screen.</string>
+    <string name="accessibility_service_summary">Draw the hub above the status bar and summon it without a launcher icon</string>
+    <string name="trigger_accessibility_required">Enable the Shortcut Hub accessibility service to use this trigger.</string>
 </resources>
