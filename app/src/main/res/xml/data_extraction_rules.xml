@@ -4,16 +4,14 @@
    for details.
 -->
 <data-extraction-rules>
-    <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
-    </cloud-backup>
     <!--
-    <device-transfer>
-        <include .../>
-        <exclude .../>
-    </device-transfer>
+        The hub on/off switch (HubSwitch.kt) is this device's running state, not configuration.
+        Restored onto a reinstall or a new phone, it could bring the app up silently switched off.
     -->
+    <cloud-backup>
+        <exclude domain="sharedpref" path="shortcut_hub_switch.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="shortcut_hub_switch.xml"/>
+    </device-transfer>
 </data-extraction-rules>

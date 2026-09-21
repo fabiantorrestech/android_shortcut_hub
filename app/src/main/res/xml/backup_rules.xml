@@ -7,7 +7,8 @@
 -->
 <full-backup-content>
     <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+        The hub on/off switch (HubSwitch.kt) is this device's running state, not configuration.
+        Restored onto a reinstall, it could bring the app up silently switched off.
+    -->
+    <exclude domain="sharedpref" path="shortcut_hub_switch.xml"/>
 </full-backup-content>

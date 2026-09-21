@@ -17,7 +17,12 @@ class InvokeShortcutHubActivity : Activity() {
         val usingAccessibilityHost = ShortcutHubSettings.load(this).useAccessibilityService &&
             ShortcutHubAccessibilityService.isConnected
 
-        if (!usingAccessibilityHost && !ShortcutHubOverlayService.canDrawOverlays(this)) {
+        // While the hub is switched off, routeShortcutHubToggle refuses and says why; sending the
+        // user to a permission screen first would be asking them to fix the wrong thing.
+        if (HubSwitch.isEnabled(this) &&
+            !usingAccessibilityHost &&
+            !ShortcutHubOverlayService.canDrawOverlays(this)
+        ) {
             Toast.makeText(this, R.string.overlay_permission_needed, Toast.LENGTH_LONG).show()
             startActivity(
                 Intent(

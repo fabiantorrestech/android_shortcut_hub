@@ -25,6 +25,18 @@ class ShortcutHubWidgetHost private constructor(
         }
     }
 
+    /**
+     * [HubSwitch]'s reset. Every hub host has been dismissed by the time this runs, so each should
+     * already have stopped listening; this makes certain, dropping any listener a failed show
+     * leaked, and forgets the views so the next open builds fresh ones. A host that is still
+     * finishing and stops listening afterwards is harmless - removing an absent listener is a no-op.
+     */
+    fun resetListening() {
+        listeners.clear()
+        runCatching { super.stopListening() }
+        runCatching { clearViews() }
+    }
+
     override fun onCreateView(
         context: Context,
         appWidgetId: Int,

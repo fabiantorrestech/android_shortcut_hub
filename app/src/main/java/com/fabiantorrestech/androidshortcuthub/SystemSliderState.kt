@@ -44,12 +44,17 @@ internal class SystemSliderState(
                 val observer = object : ContentObserver(handler) {
                     override fun onChange(selfChange: Boolean) { refresh() }
                 }
-                contentResolver.registerContentObserver(
-                    Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
-                    false,
-                    observer,
-                )
-                newObservers += observer
+                // Guarded like the volume observers below. refCount is already incremented by
+                // now, so a throw here used to leave it stuck at 1 with nothing registered, and
+                // every later start() took the early return and never registered at all.
+                runCatching {
+                    contentResolver.registerContentObserver(
+                        Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
+                        false,
+                        observer,
+                    )
+                    newObservers += observer
+                }
             }
             SliderType.VOLUME -> {
                 // Watch all volume streams; refresh on any change
@@ -97,6 +102,15 @@ internal class SystemSliderState(
                     SystemSliderState(context.applicationContext, config)
                 }
             }
+        }
+
+        /**
+         * [HubSwitch]'s reset: the next hub open builds fresh instances, so neither a stale stream
+         * choice nor a stuck observer count survives it. An instance a live composition still holds
+         * is unaffected - it keeps its own observers, and its DisposableEffect still stops it.
+         */
+        internal fun clearInstances() {
+            synchronized(instances) { instances.clear() }
         }
     }
 

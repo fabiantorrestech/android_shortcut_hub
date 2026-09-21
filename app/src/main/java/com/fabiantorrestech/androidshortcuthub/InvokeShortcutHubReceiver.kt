@@ -15,6 +15,20 @@ class InvokeShortcutHubReceiver : BroadcastReceiver() {
 }
 
 internal fun routeShortcutHubToggle(context: Context) {
+    // The master switch. Every trigger funnels through here, so this one check is what makes "off"
+    // mean off - including the accessibility shortcut and external intents, which Android keeps
+    // delivering whatever the app thinks.
+    //
+    // The toast says why where Android lets it: it is dropped for an app with notifications off
+    // unless the app is in the foreground. So it reaches the activity-based triggers (assist, the
+    // launcher shortcut, Tasker or Key Mapper launching the activity) but not the accessibility
+    // shortcut or a broadcast.
+    if (!HubSwitch.isEnabled(context)) {
+        Log.d("ShortcutHubRoute", "Toggle refused: the hub is switched off")
+        Toast.makeText(context.applicationContext, R.string.hub_switched_off, Toast.LENGTH_SHORT).show()
+        return
+    }
+
     val startMs = SystemClock.elapsedRealtime()
     val config = ShortcutHubSettings.load(context)
 

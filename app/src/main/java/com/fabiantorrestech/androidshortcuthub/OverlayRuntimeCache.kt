@@ -41,6 +41,16 @@ internal object OverlayRuntimeCache {
         }
     }
 
+    /**
+     * [invalidate] plus the fonts. A layout save leaves the fonts alone because it cannot change
+     * them, but [HubSwitch]'s reset must not: a font that failed to load is cached as null, and
+     * would otherwise stay missing for the life of the process.
+     */
+    internal fun clear() {
+        invalidate()
+        synchronized(fontLock) { cachedFonts.clear() }
+    }
+
     internal fun preloadFonts(
         portraitState: OverlayUiState,
         landscapeState: OverlayUiState,

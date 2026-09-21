@@ -51,6 +51,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun TriggersTab(
+    hubEnabled: Boolean,
     triggerConfig: TriggerConfig,
     isAccessibilityServiceEnabled: Boolean,
     onTriggerConfigChange: (TriggerConfig) -> Unit,
@@ -60,7 +61,11 @@ internal fun TriggersTab(
     // onDispose covers leaving the tab (the tab dispatch swaps this composable out), and the
     // lifecycle observer covers leaving the app, after which the handles return to whatever
     // behaviour their settings call for. Re-entering on this tab brings it back.
-    val previewWanted = triggerConfig.livePreviewEnabled &&
+    //
+    // hubEnabled is a key as much as a condition: switching the hub back on builds a brand-new
+    // handle controller, and the change of key is what re-sends the preview request to it.
+    val previewWanted = hubEnabled &&
+        triggerConfig.livePreviewEnabled &&
         triggerConfig.masterEnabled &&
         isAccessibilityServiceEnabled
     val lifecycleOwner = LocalLifecycleOwner.current

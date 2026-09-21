@@ -30,8 +30,10 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.fabiantorrestech.androidshortcuthub.ui.theme.ShortcutHubTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -113,6 +115,12 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
     private var widgetHostListening = false
 
+    /** The show still loading its layout, so [enterDormant] can stop it before it adds a window. */
+    private var showJob: Job? = null
+
+    /** The event mask from the service config, put back when the hub is switched on again. */
+    private var declaredEventTypes = 0
+
     /** See [SYSTEM_UI_DISMISS_GRACE_MS]. Volatile because it is read from onAccessibilityEvent. */
     @Volatile
     private var suppressSystemUiDismissUntilMs = 0L
@@ -162,20 +170,33 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         isConnected = true
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        declaredEventTypes = serviceInfo?.eventTypes ?: 0
         triggerConfig = loadTriggerConfig()
         runCatching {
             getSharedPreferences(TRIGGER_PREFS_NAME, Context.MODE_PRIVATE)
                 .registerOnSharedPreferenceChangeListener(triggerPrefsListener)
         }.onFailure { Log.e(TAG, "Trigger prefs listener registration failed", it) }
         registerAccessibilityButton()
-        edgeTriggerController = EdgeTriggerController(this, windowManager, serviceScope).also {
-            runCatching { it.start(triggerConfig) }
-                .onFailure { e -> Log.e(TAG, "Edge trigger start failed", e) }
-        }
         registerReceiverCompat(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         registerReceiverCompat(systemUiDismissReceiver, IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
         serviceScope.launch {
             toggleRequests.collect { toggleOverlay() }
+        }
+        // Read here as well as applied live, because this is what makes the switch hold across a
+        // reboot: Android reconnects the service at boot without any other app code having run.
+        if (HubSwitch.isEnabled(this)) {
+            startHubMachinery()
+        } else {
+            Log.d(TAG, "Connected with the hub switched off; staying dormant")
+            setEventDelivery(false)
+        }
+    }
+
+    /** What the hub switch turns off: the edge handles, and the cache pre-warm behind the hub. */
+    private fun startHubMachinery() {
+        edgeTriggerController = EdgeTriggerController(this, windowManager, serviceScope).also {
+            runCatching { it.start(triggerConfig) }
+                .onFailure { e -> Log.e(TAG, "Edge trigger start failed", e) }
         }
         // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
         // Guarded: this is only an optimisation, but an uncaught throw here kills the process, and
@@ -186,6 +207,59 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 OverlayRuntimeCache.preloadFonts(portrait, landscape, ::loadFontFamily)
             }.onFailure { Log.e(TAG, "Overlay pre-warm failed", it) }
         }
+    }
+
+    /**
+     * The hub was switched off.
+     *
+     * Not [tearDownServiceState]: that cancels serviceScope, which cannot be restarted, and the
+     * service has to be able to wake again without the user re-enabling it in Android's settings.
+     * So the scope, the receivers, the button callback and the toggle collector all stay - they are
+     * inert while routeShortcutHubToggle refuses every toggle - and everything that does work or
+     * holds state goes.
+     */
+    internal fun enterDormant() {
+        showJob?.cancel()
+        showJob = null
+        // Normally reset by the show's own finally, which never runs for a job cancelled before it
+        // started.
+        isShowingOverlay = false
+        dismissOverlay()
+        suppressSystemUiDismissUntilMs = 0L
+        // Dropped rather than just stopped: a stopped controller re-attaches its handles on the next
+        // setSuppressed, setPreviewMode, reloadConfig or rotation, and every caller already goes
+        // through ?. Dropping it also discards its suppression latches and preview mode.
+        runCatching { edgeTriggerController?.stop() }
+            .onFailure { Log.e(TAG, "Edge trigger stop failed", it) }
+        edgeTriggerController = null
+        _foregroundAppPackage.value = null
+        setEventDelivery(false)
+        Log.d(TAG, "Dormant")
+    }
+
+    /** The hub was switched back on: rebuild what [enterDormant] took down, from scratch. */
+    internal fun leaveDormant() {
+        runCatching { edgeTriggerController?.stop() }
+        edgeTriggerController = null
+        setEventDelivery(true)
+        triggerConfig = loadTriggerConfig()
+        startHubMachinery()
+        Log.d(TAG, "Awake")
+    }
+
+    /**
+     * Window events only drive dismiss-on-SystemUI and per-app handle filtering, and neither applies
+     * while the hub is off, so switching off stops them reaching the process at all. Only the event
+     * mask changes: flagRequestAccessibilityButton comes from the service config and is not
+     * changeable at runtime, so the accessibility shortcut keeps arriving - and gets told the hub
+     * is off, by routeShortcutHubToggle.
+     */
+    private fun setEventDelivery(enabled: Boolean) {
+        runCatching {
+            val info = serviceInfo ?: return
+            info.eventTypes = if (enabled) declaredEventTypes else 0
+            serviceInfo = info
+        }.onFailure { Log.e(TAG, "Event delivery change failed", it) }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -315,7 +389,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     }
 
     private fun showOverlay() {
-        if (overlayView != null || isShowingOverlay) return
+        if (overlayView != null || isShowingOverlay || !HubSwitch.isEnabled(this)) return
         isShowingOverlay = true
 
         // Arm the grace window before the async state load, so a SystemUI-hosted trigger (the
@@ -327,7 +401,7 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
         // the hub they just opened.
         setHubVisible(true)
 
-        serviceScope.launch {
+        showJob = serviceScope.launch {
             val startMs = SystemClock.elapsedRealtime()
             try {
                 val (portraitState, landscapeState) = withContext(Dispatchers.IO) {
@@ -434,6 +508,10 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 windowManager.addView(composeView, params)
                 warmFontsAsync(portraitState, landscapeState)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
+            } catch (e: CancellationException) {
+                // Cancelled by enterDormant or teardown, both of which clean up themselves. A
+                // rollback here as well could run after a newer show and tear that one down.
+                throw e
             } catch (e: Exception) {
                 // Without this catch an exception here (e.g. addView, font loading, or the first
                 // Compose composition) propagates uncaught on the main thread and crashes the
@@ -449,6 +527,9 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
                 }
                 overlayView = null
                 overlayParams = null
+                // The layout may already have started the widget host; left alone, it would keep
+                // listening with nothing on screen until some later successful dismiss.
+                stopWidgetHostListeningIfNeeded()
             } finally {
                 isShowingOverlay = false
             }

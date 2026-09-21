@@ -135,14 +135,16 @@ class ShortcutHubApplication : Application() {
         }.getOrNull()
     }
 
-    private fun warmOverlayServiceIfEligible() {
+    /** Also called by [HubSwitch] when the hub is switched back on - the latch above only runs once. */
+    internal fun warmOverlayServiceIfEligible() {
+        if (!HubSwitch.isEnabled(this)) return
         val config = ShortcutHubSettings.load(this)
         if (!config.useAccessibilityService && ShortcutHubOverlayService.canDrawOverlays(this)) {
             ShortcutHubOverlayService.prewarm(this)
             // Pre-warm state and font caches so the first toggle doesn't pay cold I/O costs.
             // Guarded: SupervisorJob does NOT stop an uncaught exception in a launch{} from
             // reaching the default handler, so an unreadable layout here would crash the app on
-            // every launch (warmOverlayServiceIfEligible runs from MainActivity.onResume).
+            // every launch (warmOverlayServiceIfEligible runs from MainActivity.onCreate).
             appScope.launch {
                 runCatching {
                     val (portrait, landscape) = OverlayStateRepository.loadBoth(applicationContext)

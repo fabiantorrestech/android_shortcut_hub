@@ -49,6 +49,11 @@ internal fun fireShortcutHubTrigger(
         .onFailure { Log.e(TAG, "trigger $source failed to route", it) }
 }
 
+/** Part of [HubSwitch]'s reset: the next trigger fires however recently the last one did. */
+internal fun resetTriggerCooldown() {
+    lastFireMs.set(0L)
+}
+
 /**
  * Turns the ASSIST activity-alias on or off.
  *

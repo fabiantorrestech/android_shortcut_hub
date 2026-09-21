@@ -9,4 +9,5 @@
     <string name="accessibility_service_description">Lets Shortcut Hub draw over the status bar, appear on the lock screen, and be summoned by the accessibility button, the volume-key shortcut, or an edge gesture. Shortcut Hub does not read the contents of your screen.</string>
     <string name="accessibility_service_summary">Draw the hub above the status bar and summon it without a launcher icon</string>
     <string name="trigger_accessibility_required">Enable the Shortcut Hub accessibility service to use this trigger.</string>
+    <string name="hub_switched_off">Shortcut Hub is off. Turn it on in the app to use it.</string>
 </resources>

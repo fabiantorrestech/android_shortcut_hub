@@ -29,6 +29,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.fabiantorrestech.androidshortcuthub.ui.theme.ShortcutHubTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -134,10 +135,16 @@ class ShortcutHubOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action ?: ACTION_TOGGLE_OVERLAY) {
-            ACTION_TOGGLE_OVERLAY -> toggleOverlay()
-            ACTION_PREWARM_OVERLAY -> Unit
+        if (!HubSwitch.isEnabled(this)) {
+            // The router refuses every toggle and the pre-warm is skipped while the hub is off, so
+            // this is a stray start. Don't linger, and don't come back.
+            stopSelf()
+            return START_NOT_STICKY
         }
+        // A null intent is Android restarting this START_STICKY service after the process was
+        // killed. It used to be read as a toggle, so the hub opened by itself with nothing having
+        // asked for it. A restart is only ever a pre-warm; only an explicit toggle shows the hub.
+        if (intent?.action == ACTION_TOGGLE_OVERLAY) toggleOverlay()
         return START_STICKY
     }
 
@@ -162,6 +169,7 @@ class ShortcutHubOverlayService : Service() {
 
     private fun showOverlay() {
         if (overlayView != null || isShowingOverlay || !canDrawOverlays(this)) return
+        if (!HubSwitch.isEnabled(this)) return
         isShowingOverlay = true
 
         // Edge handles are accessibility overlays, which stack above this window type, so they
@@ -268,10 +276,16 @@ class ShortcutHubOverlayService : Service() {
                 overlayParams = params
                 warmFontsAsync(portraitState, landscapeState)
                 Log.d(TAG, "Overlay shown in ${SystemClock.elapsedRealtime() - startMs}ms")
+            } catch (e: CancellationException) {
+                // Only onDestroy cancels this scope, and it dismisses the overlay itself.
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "showOverlay failed", e)
                 // Roll back any half-built overlay state so the next toggle starts clean.
                 ShortcutHubAccessibilityService.setHubVisible(false)
+                // The layout may already have started the widget host; left alone, it would keep
+                // listening with nothing on screen until some later successful dismiss.
+                stopWidgetHostListeningIfNeeded()
                 overlayLifecycleOwner?.destroy()
                 overlayLifecycleOwner = null
                 overlayView?.let {

@@ -34,9 +34,10 @@ internal fun loadInstalledLaunchableApps(context: Context): List<LaunchableApp> 
  * already avoids this with its own `hasLoadedApps` guard; this gives the editor the same, following
  * the OverlayRuntimeCache precedent (which caches layouts and fonts, but not apps).
  *
- * Held for the life of the process and deliberately never invalidated: nothing here observes
+ * Held for the life of the process and never invalidated by itself: nothing here observes
  * PACKAGE_ADDED, and a list that is at most one process stale is a fair trade for a picker that
- * never stalls. An app installed while Shortcut Hub is running is picked up on the next launch.
+ * never stalls. An app installed while Shortcut Hub is running is picked up on the next launch, or
+ * sooner if the hub is switched off and on again ([HubSwitch] clears this).
  */
 private object InstalledAppCache {
     @Volatile
@@ -44,7 +45,14 @@ private object InstalledAppCache {
 
     fun get(context: Context): List<LaunchableApp> =
         cached ?: loadInstalledLaunchableApps(context).also { cached = it }
+
+    fun clear() {
+        cached = null
+    }
 }
+
+/** Part of [HubSwitch]'s reset. The next picker open enumerates again. */
+internal fun clearInstalledAppCache() = InstalledAppCache.clear()
 
 /** Cached [loadInstalledLaunchableApps]. Still enumerates on a cold cache — call off the main thread. */
 internal fun loadInstalledLaunchableAppsCached(context: Context): List<LaunchableApp> =

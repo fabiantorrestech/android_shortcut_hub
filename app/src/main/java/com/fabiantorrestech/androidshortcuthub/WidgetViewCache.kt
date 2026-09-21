@@ -29,6 +29,23 @@ object WidgetViewCache {
         cachedViews.remove(appWidgetId)
     }
 
+    /**
+     * Drops every cached view, for [HubSwitch]'s reset. Main thread only, and only once no hub is on
+     * screen: a view still attached somewhere would stop updating, because the next [getOrCreate]
+     * for its id registers a replacement with the host.
+     *
+     * The callbacks are cleared on the way out because each one captures the overlay that last
+     * showed the view, which would otherwise stay reachable for as long as the view does.
+     */
+    fun clear() {
+        cachedViews.values.forEach { view ->
+            (view as? ZeroPaddingWidgetHostView)?.onWidgetActivated = null
+            view.setOnLongClickListener(null)
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        cachedViews.clear()
+    }
+
     private fun createProviderContext(
         context: Context,
         providerInfo: AppWidgetProviderInfo,

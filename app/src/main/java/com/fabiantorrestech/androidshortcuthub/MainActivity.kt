@@ -26,6 +26,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -123,6 +128,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var hasWriteSettingsPermission by remember { mutableStateOf(android.provider.Settings.System.canWrite(context)) }
     var config by remember { mutableStateOf(ShortcutHubSettings.load(context)) }
     var triggerConfig by remember { mutableStateOf(TriggerRepository.load(context)) }
+    var hubEnabled by remember { mutableStateOf(HubSwitch.isEnabled(context)) }
     var settingsMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.SETUP) }
 
@@ -275,6 +281,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 hasWriteSettingsPermission = android.provider.Settings.System.canWrite(context)
                 config = ShortcutHubSettings.load(context)
                 triggerConfig = TriggerRepository.load(context)
+                hubEnabled = HubSwitch.isEnabled(context)
             }
         }
         lifecycle.addObserver(observer)
@@ -340,6 +347,14 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             )
+            HubSwitchBar(
+                enabled = hubEnabled,
+                onEnabledChange = { on ->
+                    HubSwitch.setEnabled(context, on)
+                    hubEnabled = on
+                },
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            )
             PrimaryScrollableTabRow(
                 selectedTabIndex = selectedTab.ordinal,
                 edgePadding = 0.dp,
@@ -355,6 +370,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
         }
         when (selectedTab) {
             MainTab.SETUP -> SetupTab(
+                hubEnabled = hubEnabled,
                 hasOverlayPermission = hasOverlayPermission,
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
@@ -451,6 +467,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 },
             )
             MainTab.TRIGGERS -> TriggersTab(
+                hubEnabled = hubEnabled,
                 triggerConfig = triggerConfig,
                 isAccessibilityServiceEnabled = isAccessibilityServiceEnabled,
                 onTriggerConfigChange = { updated ->
@@ -467,6 +484,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
 
 @Composable
 private fun SetupTab(
+    hubEnabled: Boolean,
     hasOverlayPermission: Boolean,
     isAccessibilityServiceEnabled: Boolean,
     isIgnoringBatteryOptimizations: Boolean,
@@ -489,7 +507,11 @@ private fun SetupTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        OutlinedButton(onClick = onToggleOverlay, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onToggleOverlay,
+            enabled = hubEnabled,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text("Toggle Overlay")
         }
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -680,6 +702,54 @@ internal fun CopyableDetailRow(label: String, value: String) {
             },
         ) {
             Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label")
+        }
+    }
+}
+
+/**
+ * The master switch, in the style of Android Settings' main switch: one full-width bar that reads
+ * as the state of the whole app rather than as one setting among many. See [HubSwitch] for what
+ * turning it off actually does.
+ */
+@Composable
+private fun HubSwitchBar(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val containerColor by animateColorAsState(
+        targetValue = if (enabled) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+        label = "hubSwitchContainer",
+    )
+    // Surface clips its content to the shape, which keeps the ripple inside the pill.
+    Surface(
+        color = containerColor,
+        shape = RoundedCornerShape(28.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .toggleable(value = enabled, role = Role.Switch, onValueChange = onEnabledChange)
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Use Shortcut Hub", style = MaterialTheme.typography.titleMedium)
+                if (!enabled) {
+                    Text(
+                        "Off — nothing can open the hub, and nothing runs in the background.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalContentColor.current.copy(alpha = 0.7f),
+                    )
+                }
+            }
+            Spacer(Modifier.width(16.dp))
+            // The whole bar is the toggle, so the switch is only its indicator.
+            Switch(checked = enabled, onCheckedChange = null)
         }
     }
 }
