@@ -537,7 +537,7 @@ internal data class OverlayUiState(
     val hapticFeedbackEnabled: Boolean = true,
     val panelHandleLocked: Boolean = false,
     val showPanelHandle: Boolean = true,
-    val overlayBackgroundAlpha: Float = 0.33f,
+    val overlayBackgroundAlpha: Float = DEFAULT_OVERLAY_BG_ALPHA,
     val showOverLockscreen: Boolean = false,
     val launchAnimationEnabled: Boolean = true,
     val dismissOnWidgetActivity: Boolean = false,

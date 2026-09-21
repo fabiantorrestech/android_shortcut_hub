@@ -24,6 +24,20 @@ private const val KEY_DISMISS_ON_SCREEN_OFF = "dismiss_on_screen_off"
 private const val KEY_LAUNCH_ANIMATION_ENABLED = "launch_animation_enabled"
 private const val KEY_DISMISS_ON_WIDGET_ACTIVITY = "dismiss_on_widget_activity"
 
+/** Backdrop opacity behind the overlay, shared by both orientations. */
+internal const val DEFAULT_OVERLAY_BG_ALPHA = 0.75f
+
+/**
+ * The default before it was raised to [DEFAULT_OVERLAY_BG_ALPHA].
+ *
+ * A stored value exactly equal to this is treated as "never changed" and migrated on load, because
+ * the editor writes this key on every Save - so an install that has saved even once has the old
+ * default baked in, and a new default alone would change nothing. The equality is safe as an
+ * intent test: the slider is continuous, so a deliberate 33% lands on a neighbouring float
+ * (0.3312...) rather than exactly 0.33f.
+ */
+private const val LEGACY_OVERLAY_BG_ALPHA = 0.33f
+
 enum class DefaultTextColorMode {
     SYSTEM,
     BLACK,
@@ -43,7 +57,7 @@ data class ShortcutHubConfig(
     val hapticFeedbackEnabled: Boolean = true,
     val panelHandleLocked: Boolean = false,
     val showPanelHandle: Boolean = true,
-    val overlayBackgroundAlpha: Float = 0.33f,
+    val overlayBackgroundAlpha: Float = DEFAULT_OVERLAY_BG_ALPHA,
     val showOverLockscreen: Boolean = false,
     val dismissAccessibilityBanner: Boolean = false,
     val useAccessibilityService: Boolean = false,
@@ -73,7 +87,9 @@ object ShortcutHubSettings {
             hapticFeedbackEnabled = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true),
             panelHandleLocked = prefs.getBoolean(KEY_PANEL_HANDLE_LOCKED, false),
             showPanelHandle = prefs.getBoolean(KEY_SHOW_PANEL_HANDLE, true),
-            overlayBackgroundAlpha = prefs.getFloat(KEY_OVERLAY_BG_ALPHA, 0.33f).coerceIn(0f, 0.9f),
+            overlayBackgroundAlpha = prefs.getFloat(KEY_OVERLAY_BG_ALPHA, DEFAULT_OVERLAY_BG_ALPHA)
+                .let { if (it == LEGACY_OVERLAY_BG_ALPHA) DEFAULT_OVERLAY_BG_ALPHA else it }
+                .coerceIn(0f, 0.9f),
             showOverLockscreen = prefs.getBoolean(KEY_SHOW_OVER_LOCKSCREEN, false),
             dismissAccessibilityBanner = prefs.getBoolean(KEY_DISMISS_ACCESSIBILITY_BANNER, false),
             useAccessibilityService = prefs.getBoolean(KEY_USE_ACCESSIBILITY_SERVICE, false),

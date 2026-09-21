@@ -6,9 +6,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
@@ -39,14 +42,18 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * In-app layout editor screen.
@@ -558,58 +565,166 @@ internal fun OverlayEditorScreen(
             }
         }
     } else {
-        // ── Portrait: preview owns the screen, controls live in a sheet ──────
+        // ── Portrait: the preview always stays fully visible above the sheet ─
         // Portrait used to stack five regions in one Column - top bar, tabs, preview at
         // weight(1.4f), add-tile row, inspector at weight(1f) - so roughly 200dp of fixed chrome
-        // was taken off the top and the inspector then held ~40% of what was left whether or not
-        // anything was selected. The preview, the thing the user is actually arranging, got a
-        // little over half of the remainder.
+        // came off the top and the inspector then held ~40% of what was left whether or not
+        // anything was selected.
         //
-        // The inspector is now a sheet that overlays the preview instead of shrinking it. At rest
-        // it peeks just far enough for the selected tile's summary and the add-tile row; dragging
-        // it up reveals the full inspector over the preview, and it never takes space it is not
-        // using.
-        val sheetScaffoldState = rememberBottomSheetScaffoldState(
-            bottomSheetState = rememberStandardBottomSheetState(initialValue = SheetValue.PartiallyExpanded),
-        )
-        val sheetScope = rememberCoroutineScope()
-        val screenHeight = configuration.screenHeightDp.dp
+        // The inspector is a sheet instead, but a sheet on its own is not enough:
+        // BottomSheetScaffold hands its content `PaddingValues(bottom = sheetPeekHeight)` and
+        // nothing else, so the body is measured at full height and the sheet is drawn over it as a
+        // sibling. Expanding it simply buried the layout. The content below is therefore sized
+        // from the sheet's own offset so the preview shrinks to fit the space that is actually
+        // free, at every point in the drag.
+        //
+        // The top bar sits OUTSIDE the scaffold on purpose. requireOffset() is measured from the
+        // top of the scaffold while the body is placed at y = topBarHeight, and the body has no
+        // clean way to learn that inset (the PaddingValues it gets has no top component). With no
+        // topBar the scaffold places the body at y = 0, and the offset becomes directly the
+        // sheet's top edge in the body's own coordinates.
+        Column(modifier = Modifier.fillMaxSize()) {
+            topBar()
 
-        BottomSheetScaffold(
-            scaffoldState = sheetScaffoldState,
-            topBar = topBar,
-            sheetPeekHeight = EDITOR_SHEET_PEEK_HEIGHT,
-            sheetContent = {
-                SelectedTileSummary(
-                    editorState = editorState,
-                    onClick = { sheetScope.launch { sheetScaffoldState.bottomSheetState.expand() } },
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                val sheetScaffoldState = rememberBottomSheetScaffoldState(
+                    bottomSheetState = rememberStandardBottomSheetState(
+                        initialValue = SheetValue.PartiallyExpanded,
+                    ),
                 )
-                AddTileRow(editorState = editorState, onAddWidget = { addWidget() })
-                HorizontalDivider()
-                // Bounded so the sheet cannot grow past the screen: the inspector scrolls
-                // internally, and an unbounded scroll container inside a sheet has no height to
-                // measure against.
-                inspector(Modifier.heightIn(max = screenHeight * 0.55f))
-            },
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .padding(innerPadding)
-                    .fillMaxSize(),
-            ) {
-                EditorOrientationTabs(activeTab, editorState, onSelectTab)
-                EditorPreviewPane(
-                    editorState = editorState,
-                    deviceAspectRatio = deviceAspectRatio,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                )
+                val sheetState = sheetScaffoldState.bottomSheetState
+                val sheetScope = rememberCoroutineScope()
+
+                // Measured against the space the sheet actually lives in, not the whole screen.
+                // EDITOR_SHEET_CHROME_HEIGHT is what stacks above the inspector inside the sheet,
+                // so subtracting it is what makes the *sheet* land on the target fraction rather
+                // than the inspector alone. See the constant for the breakdown.
+                val inspectorMaxHeight =
+                    (maxHeight * EDITOR_SHEET_MAX_FRACTION - EDITOR_SHEET_CHROME_HEIGHT)
+                        .coerceAtLeast(EDITOR_SHEET_PEEK_HEIGHT)
+
+                // Selecting a tile opens the controls for it, which is only reasonable because the
+                // preview shrinks rather than being covered. Deselecting puts them away again.
+                LaunchedEffect(editorState.selectedTileId) {
+                    try {
+                        if (editorState.selectedTileId != null) sheetState.expand()
+                        else sheetState.partialExpand()
+                    } catch (e: CancellationException) {
+                        // A new selection arrived mid-animation and restarted this effect. That is
+                        // the effect working as intended, so let cancellation propagate.
+                        throw e
+                    } catch (_: IllegalStateException) {
+                        // The sheet has no anchors until its first measure pass. The next selection
+                        // change retries, and the sheet starts partially expanded regardless.
+                    }
+                }
+
+                val peekPx = with(LocalDensity.current) { EDITOR_SHEET_PEEK_HEIGHT.roundToPx() }
+
+                BottomSheetScaffold(
+                    scaffoldState = sheetScaffoldState,
+                    sheetPeekHeight = EDITOR_SHEET_PEEK_HEIGHT,
+                    sheetDragHandle = { EditorSheetDragHandle() },
+                    sheetContent = {
+                        SelectedTileSummary(
+                            editorState = editorState,
+                            onClick = { sheetScope.launch { sheetState.expand() } },
+                        )
+                        AddTileRow(editorState = editorState, onAddWidget = { addWidget() })
+                        HorizontalDivider()
+                        // heightIn rather than height, so the sheet still wraps to something short
+                        // when nothing is selected. Not weight(): sheetContent is a ColumnScope but
+                        // that column is measured loose against the full screen, and any weight in
+                        // here snaps the sheet to full height.
+                        inspector(Modifier.heightIn(max = inspectorMaxHeight))
+                    },
+                ) {
+                    // The scaffold's own PaddingValues is deliberately ignored - it only ever
+                    // describes the peek height, so honouring it as well would double-count.
+                    Column(
+                        modifier = Modifier
+                            // Must come BEFORE fillMaxSize. With fillMaxSize outermost it hands this
+                            // block a fixed minimum of the full body height; reporting anything
+                            // shorter then gets coerced back up and the content centred in the
+                            // leftover space - which shifted the whole column down by half the peek
+                            // height, opening a gap under the top bar and pushing the bottom of the
+                            // grid under the sheet even while it was collapsed. Outermost, this
+                            // block receives the scaffold's loose body constraints instead.
+                            .layout { measurable, constraints ->
+                                // Read in the layout phase, never in composition: requireOffset()
+                                // throws until the sheet's first measure pass and is documented to
+                                // be read from layout. This is the same shape BottomSheetScaffold
+                                // itself uses, passing sheetOffset as a lambda into its Layout. It
+                                // also means the drag re-measures without recomposing.
+                                val sheetTop = runCatching { sheetState.requireOffset() }
+                                    .getOrNull()
+                                    ?.takeIf { it.isFinite() }
+                                    ?.roundToInt()
+                                val available = (sheetTop ?: (constraints.maxHeight - peekPx))
+                                    .coerceIn(0, constraints.maxHeight)
+                                val placeable = measurable.measure(
+                                    constraints.copy(minHeight = available, maxHeight = available),
+                                )
+                                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                            }
+                            .fillMaxSize(),
+                    ) {
+                        EditorOrientationTabs(activeTab, editorState, onSelectTab)
+                        EditorPreviewPane(
+                            editorState = editorState,
+                            deviceAspectRatio = deviceAspectRatio,
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-/** Tall enough for the summary row and the add-tile row, and nothing more. */
-private val EDITOR_SHEET_PEEK_HEIGHT = 132.dp
+/**
+ * The sheet's grab affordance, slimmer than [BottomSheetDefaults.DragHandle].
+ *
+ * The default pads 22dp above and below a 4dp bar, 48dp in total. In an editor where the sheet is
+ * competing with the layout it is arranging, that is a lot to spend on a decoration, and it is
+ * charged twice over: once against the peek height and again against the inspector's share of the
+ * expanded sheet.
+ */
+@Composable
+private fun EditorSheetDragHandle() {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 32.dp, height = 4.dp)
+                .background(
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    RoundedCornerShape(2.dp),
+                ),
+        )
+    }
+}
+
+/**
+ * Everything that stacks above the inspector inside the sheet: the slim drag handle (20dp),
+ * [SelectedTileSummary] (~24dp), [AddTileRow] (48dp: a 40dp button plus 4dp either side) and the
+ * divider (1dp). Subtracted from the sheet's budget to get the inspector's, since there is no
+ * sheetMaxHeight on BottomSheetScaffold and the sheet's height is simply whatever its content
+ * measures to.
+ */
+private val EDITOR_SHEET_CHROME_HEIGHT = 93.dp
+
+/** Tall enough for the drag handle, the summary row and the add-tile row, and nothing more. */
+private val EDITOR_SHEET_PEEK_HEIGHT = 100.dp
+
+/**
+ * The largest share of the editor the expanded sheet may take. The rest always belongs to the
+ * preview, which shrinks to fit it, so this is really the trade between how much of the inspector
+ * shows without scrolling and how large the layout stays while you edit it.
+ */
+private const val EDITOR_SHEET_MAX_FRACTION = 0.55f
 
 /**
  * The one line of the sheet that is always visible: what is selected and how big it is. Tapping it

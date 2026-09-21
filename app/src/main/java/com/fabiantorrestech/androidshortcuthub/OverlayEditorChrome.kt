@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -51,6 +52,13 @@ import androidx.compose.ui.unit.dp
  * so every fix had to be made in two places, and the two copies had already drifted. Hoisting them
  * here leaves the two branches differing only in how they arrange the same parts.
  */
+
+/**
+ * The inset the runtime overlay applies around its grid on a full-size screen
+ * (`OverlayUI.kt`, `padding(start = 16.dp, end = 16.dp, bottom = 16.dp)`). The editor preview
+ * scales this rather than copying it, so the miniature keeps the real layout's proportions.
+ */
+private val RUNTIME_OVERLAY_INSET = 16.dp
 
 /** Back, title, the appearance and grid popups, and the editor's single Save. */
 @Composable
@@ -334,10 +342,24 @@ internal fun EditorPreviewPane(
         fallback = MaterialTheme.colorScheme.onSurface,
     )
 
+    // Width of the real screen this preview stands in for, so the runtime's inset can be scaled down
+    // in proportion. deviceAspectRatio < 1 means the Portrait tab, whose screen is the short side.
+    val configuration = LocalConfiguration.current
+    val representedWidthDp =
+        if (deviceAspectRatio < 1f) minOf(configuration.screenWidthDp, configuration.screenHeightDp)
+        else maxOf(configuration.screenWidthDp, configuration.screenHeightDp)
+
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
         val wide = maxWidth / maxHeight > deviceAspectRatio
         val previewWidth = if (wide) maxHeight * deviceAspectRatio else maxWidth
         val previewHeight = if (wide) maxHeight else maxWidth / deviceAspectRatio
+
+        // The runtime overlay pads the grid by RUNTIME_OVERLAY_INSET on a full-size screen
+        // (OverlayUI.kt). This used to be copied into the preview as the same absolute 16dp, which
+        // is not a miniature of it: at a 250dp-wide preview it was already ~1.6x too large, and
+        // once the preview shrinks to make room for the inspector sheet it ate a growing share of
+        // the box. Scaling it keeps the preview a faithful copy of the real layout at any size.
+        val inset = RUNTIME_OVERLAY_INSET * (previewWidth.value / representedWidthDp.coerceAtLeast(1))
 
         Box(
             modifier = Modifier
@@ -360,7 +382,7 @@ internal fun EditorPreviewPane(
                 preloadedFonts = emptyMap(),
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    .padding(start = inset, end = inset, bottom = inset),
                 onTileSelect = { id ->
                     editorState.selectedTileId = if (editorState.selectedTileId == id) null else id
                 },
