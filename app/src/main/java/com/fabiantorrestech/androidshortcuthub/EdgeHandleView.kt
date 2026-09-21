@@ -152,7 +152,12 @@ internal class EdgeHandleView(
     }
 
     override fun onDraw(canvas: Canvas) {
-        if (alpha <= 0.01f) return
+        // Deliberately no early return for a transparent bar. Alpha is a render property: animating
+        // it re-composites the drawing recorded here but never calls onDraw again. This used to
+        // skip drawing at alpha 0, which is exactly where "Reveal on touch" rests, so the recorded
+        // drawing was empty and every reveal faded in nothing - the handle never showed when
+        // touched. (The Triggers-tab preview hid it, because entering preview invalidates at full
+        // alpha.) A view at alpha 0 costs nothing to composite anyway.
         val protrusion = dp(config.protrusionDp).toFloat()
         if (protrusion <= 0f || width == 0 || height == 0) return
 
