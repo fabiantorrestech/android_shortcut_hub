@@ -1,6 +1,7 @@
 package com.fabiantorrestech.androidshortcuthub
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -115,6 +116,10 @@ internal fun ScrollBoxEditorScreen(
         }
         onBack()
     }
+
+    // System back must do what the top-bar arrow does. Without this the press falls through to
+    // MainActivity's default handler and finishes the whole app instead of closing this editor.
+    BackHandler { commitAndExit() }
 
     Column(modifier = Modifier.fillMaxSize()) {
 

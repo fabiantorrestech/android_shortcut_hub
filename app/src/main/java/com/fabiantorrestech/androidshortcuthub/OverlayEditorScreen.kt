@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.rememberUpdatedState
@@ -107,6 +108,12 @@ internal fun OverlayEditorScreen(
         )
         return
     }
+
+    // Declared after the two early returns above, so it is only composed when no container editor
+    // is open. Compose dispatches BackHandlers LIFO by composition depth, which means the
+    // sub-editor's own handler wins while it is on screen and this one takes over once it closes —
+    // exactly one level of unwind per press.
+    BackHandler { onBack() }
 
     fun syncGlobalsFromActive() {
         val from = editorState

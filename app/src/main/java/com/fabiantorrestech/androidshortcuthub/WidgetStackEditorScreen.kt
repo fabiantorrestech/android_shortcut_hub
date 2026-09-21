@@ -2,6 +2,7 @@ package com.fabiantorrestech.androidshortcuthub
 
 import android.appwidget.AppWidgetManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -127,6 +128,10 @@ internal fun WidgetStackEditorScreen(
         }
         onBack()
     }
+
+    // System back must do what the top-bar arrow does. Without this the press falls through to
+    // MainActivity's default handler and finishes the whole app instead of closing this editor.
+    BackHandler { commitAndExit() }
 
     fun move(index: Int, delta: Int) {
         val target = index + delta

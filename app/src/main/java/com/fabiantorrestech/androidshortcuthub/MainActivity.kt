@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -57,11 +58,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,6 +113,34 @@ fun MainScreen(modifier: Modifier = Modifier) {
     var triggerConfig by remember { mutableStateOf(TriggerRepository.load(context)) }
     var settingsMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+
+    /**
+     * Tabs the user came through, most recent last, so system back unwinds one level per press
+     * instead of finishing the activity. [navigateToTab] drops any earlier visit to the tab being
+     * left before pushing it, which keeps the stack bounded by the tab count however long the
+     * session runs, and means back never walks the same tab twice in a row.
+     */
+    val tabBackStack = rememberSaveable(
+        saver = listSaver(
+            save = { it.toList() },
+            restore = { it.toMutableStateList() },
+        ),
+    ) { mutableStateListOf<Int>() }
+
+    fun navigateToTab(index: Int) {
+        if (index == selectedTab) return
+        tabBackStack.remove(selectedTab)
+        tabBackStack.add(selectedTab)
+        selectedTab = index
+        settingsMessage = null
+    }
+
+    // Disabled once the stack is empty, i.e. the user is where they started, so back then leaves
+    // the app as expected rather than trapping them.
+    BackHandler(enabled = tabBackStack.isNotEmpty()) {
+        selectedTab = tabBackStack.removeAt(tabBackStack.lastIndex)
+        settingsMessage = null
+    }
     var showRestoreConfirm by remember { mutableStateOf(false) }
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var autoBackupEnabled by remember { mutableStateOf(BackupPrefs.isEnabled(context)) }
@@ -305,10 +337,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 listOf("Setup", "Behavior", "Grayscale", "Layout", "Backup", "Triggers").forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
-                        onClick = {
-                            selectedTab = index
-                            settingsMessage = null
-                        },
+                        onClick = { navigateToTab(index) },
                         text = { Text(title) },
                     )
                 }
@@ -368,7 +397,11 @@ fun MainScreen(modifier: Modifier = Modifier) {
                 },
             )
             3 -> LayoutTab(
-                onBack = { selectedTab = 0; settingsMessage = null },
+                // Returns to whichever tab the editor was opened from, rather than always Setup.
+                onBack = {
+                    selectedTab = if (tabBackStack.isEmpty()) 0 else tabBackStack.removeAt(tabBackStack.lastIndex)
+                    settingsMessage = null
+                },
                 onOpenFontPicker = { tileId ->
                     pendingEditorFontTileId = tileId
                     editorFontPicker.launch(arrayOf("font/*", "application/octet-stream"))

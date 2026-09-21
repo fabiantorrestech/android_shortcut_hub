@@ -1,6 +1,7 @@
 package com.fabiantorrestech.androidshortcuthub
 
 import android.appwidget.AppWidgetManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -515,6 +516,9 @@ private fun InlineMaterialIconPicker(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Back closes the chooser rather than falling through to the editor behind it.
+    BackHandler { onDismiss() }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "Material Icon: ${materialIconForKey(currentKey)?.label ?: "None"}",
@@ -560,6 +564,9 @@ private fun InlineAppChooser(
     onAppSelected: (LaunchableApp) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Back closes the chooser rather than falling through to the editor behind it.
+    BackHandler { onDismiss() }
+
     var apps by remember { mutableStateOf<List<LaunchableApp>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
@@ -663,6 +670,10 @@ private fun InlineIntentForm(
     onSave: (IntentTileState) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Back closes the form rather than falling through to the editor behind it. Matches the
+    // form's own Cancel, so an in-progress edit is dropped the same way either route.
+    BackHandler { onDismiss() }
+
     var action by remember { mutableStateOf(initial.intentAction) }
     var intentType by remember { mutableStateOf(initial.intentType) }
     var pkg by remember { mutableStateOf(initial.intentPackage ?: "") }
