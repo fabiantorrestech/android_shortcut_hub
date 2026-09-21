@@ -59,6 +59,8 @@ class LockscreenOverlayActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instanceRef = WeakReference(this)
+        // Only on a real open, not when a rotation recreates the activity.
+        if (savedInstanceState == null) vibrateForHubOpen(this, TriggerRepository.load(this))
         // Edge handles are accessibility overlays, which stack above this activity.
         ShortcutHubAccessibilityService.setHubVisible(true)
         setShowWhenLocked(true)

@@ -162,7 +162,6 @@ internal class EdgeTriggerController(
 
         if (existing != null) {
             existing.suppressBackGesture = config.suppressBackGesture
-            existing.hapticEnabled = config.hapticOnFire
             existing.previewMode = previewMode
             existing.config = handleConfig
             // updateViewLayout rather than detach/reattach: no visible flash, and it re-runs
@@ -178,7 +177,6 @@ internal class EdgeTriggerController(
         // the view's own EdgeHandleConfig property, not the controller's TriggerConfig.
         val view = EdgeHandleView(context, side).apply {
             suppressBackGesture = this@EdgeTriggerController.config.suppressBackGesture
-            hapticEnabled = this@EdgeTriggerController.config.hapticOnFire
             // Must precede the config assignment: the config setter settles the idle alpha, and
             // that calculation depends on whether preview is active.
             previewMode = this@EdgeTriggerController.previewMode

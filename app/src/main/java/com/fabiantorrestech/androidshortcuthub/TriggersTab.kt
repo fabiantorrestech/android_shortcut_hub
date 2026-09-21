@@ -97,6 +97,11 @@ internal fun TriggersTab(
     ) {
         RequirementCard(isAccessibilityServiceEnabled, onGrantAccessibility)
 
+        OpenFeedbackCard(
+            triggerConfig = triggerConfig,
+            onTriggerConfigChange = onTriggerConfigChange,
+        )
+
         AccessibilityShortcutCard(
             enabled = isAccessibilityServiceEnabled,
             onGrantAccessibility = onGrantAccessibility,
@@ -304,6 +309,40 @@ private fun AppChooserDialog(
     )
 }
 
+/**
+ * The buzz on opening. Not gated on the accessibility service: Key Mapper, Tasker, assist and the
+ * launcher shortcut all open the hub without it.
+ */
+@Composable
+private fun OpenFeedbackCard(
+    triggerConfig: TriggerConfig,
+    onTriggerConfigChange: (TriggerConfig) -> Unit,
+) {
+    SettingsCard("When the hub opens") {
+        SettingToggleRow(
+            label = "Vibrate when the hub opens",
+            description = "Every trigger: edge handles, the accessibility shortcut, Key Mapper " +
+                "or Tasker, assist, and the launcher shortcut. Works even with Android's Touch " +
+                "feedback turned off.",
+            checked = triggerConfig.vibrateOnOpen,
+            onCheckedChange = { onTriggerConfigChange(triggerConfig.copy(vibrateOnOpen = it)) },
+        )
+        SettingToggleRow(
+            label = "Vibrate even in silent mode",
+            description = if (triggerConfig.vibrateInSilentMode) {
+                "Vibrates whatever the sound mode."
+            } else {
+                "Follows your sound mode: vibrates in Ring and Vibrate, stays still in Silent."
+            },
+            checked = triggerConfig.vibrateInSilentMode,
+            onCheckedChange = {
+                onTriggerConfigChange(triggerConfig.copy(vibrateInSilentMode = it))
+            },
+            enabled = triggerConfig.vibrateOnOpen,
+        )
+    }
+}
+
 @Composable
 private fun AssistGestureCard(
     triggerConfig: TriggerConfig,
@@ -433,12 +472,6 @@ private fun EdgeHandleGlobalCard(
                 onCheckedChange = {
                     onTriggerConfigChange(triggerConfig.copy(livePreviewEnabled = it))
                 },
-                enabled = enabled,
-            )
-            SettingToggleRow(
-                label = "Vibrate when a handle fires",
-                checked = triggerConfig.hapticOnFire,
-                onCheckedChange = { onTriggerConfigChange(triggerConfig.copy(hapticOnFire = it)) },
                 enabled = enabled,
             )
             SettingToggleRow(

@@ -68,7 +68,9 @@ object TriggerRepository {
             put("suppressBackGesture", config.suppressBackGesture)
             put("showOnLockscreen", config.showOnLockscreen)
             put("suppressWhenImmersive", config.suppressWhenImmersive)
-            put("hapticOnFire", config.hapticOnFire)
+            // Stored under the old handle-only key so an existing choice carries straight over.
+            put("hapticOnFire", config.vibrateOnOpen)
+            put("vibrateInSilentMode", config.vibrateInSilentMode)
             put("refireCooldownMs", config.refireCooldownMs)
             put("filterMode", config.filterMode.name)
             put("blockApps", serializeAppList(config.blockApps))
@@ -117,7 +119,8 @@ object TriggerRepository {
             suppressBackGesture = root.optBoolean("suppressBackGesture", true),
             showOnLockscreen = root.optBoolean("showOnLockscreen", true),
             suppressWhenImmersive = root.optBoolean("suppressWhenImmersive", false),
-            hapticOnFire = root.optBoolean("hapticOnFire", true),
+            vibrateOnOpen = root.optBoolean("hapticOnFire", true),
+            vibrateInSilentMode = root.optBoolean("vibrateInSilentMode", false),
             refireCooldownMs = root.optInt("refireCooldownMs", 350).coerceIn(0, 5_000),
             filterMode = TriggerFilterMode.entries.firstOrNull {
                 it.name == root.optString("filterMode")

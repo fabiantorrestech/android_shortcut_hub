@@ -171,6 +171,8 @@ class ShortcutHubOverlayService : Service() {
         if (overlayView != null || isShowingOverlay || !canDrawOverlays(this)) return
         if (!HubSwitch.isEnabled(this)) return
         isShowingOverlay = true
+        // Now, not after the layout has loaded, so the buzz lands with the gesture.
+        vibrateForHubOpen(this, TriggerRepository.load(this))
 
         // Edge handles are accessibility overlays, which stack above this window type, so they
         // have to stand down while the hub is up.

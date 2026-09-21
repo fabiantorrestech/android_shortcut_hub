@@ -13,7 +13,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowInsets
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import kotlin.math.abs
 
 private const val TAG = "ShortcutHubEdge"
@@ -43,7 +42,6 @@ internal class EdgeHandleView(
 
     var onTrigger: ((TriggerSource) -> Unit)? = null
     var onImmersiveChanged: ((Boolean) -> Unit)? = null
-    var hapticEnabled: Boolean = true
     var suppressBackGesture: Boolean = true
 
     /**
@@ -289,9 +287,7 @@ internal class EdgeHandleView(
         fired = true
         tracking = false
         removeCallbacks(longPressRunnable)
-        if (hapticEnabled) {
-            runCatching { performHapticForcefully(HapticFeedbackType.LongPress) }
-        }
+        // No buzz here: the hub buzzes as it opens (vibrateForHubOpen), for every trigger alike.
         onTrigger?.invoke(source)
     }
 

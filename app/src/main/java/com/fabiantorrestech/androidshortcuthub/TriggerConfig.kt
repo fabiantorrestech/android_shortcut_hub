@@ -120,7 +120,13 @@ data class TriggerConfig(
     val showOnLockscreen: Boolean = true,
     /** Heuristic, hence off by default. See EdgeTriggerController. */
     val suppressWhenImmersive: Boolean = false,
-    val hapticOnFire: Boolean = true,
+    /**
+     * One buzz each time the hub opens, whichever trigger opened it. Replaces the edge handles'
+     * own buzz, so a handle swipe never vibrates twice. See vibrateForHubOpen.
+     */
+    val vibrateOnOpen: Boolean = true,
+    /** Off: follow the sound mode (buzz in Ring and Vibrate, not in Silent). On: buzz regardless. */
+    val vibrateInSilentMode: Boolean = false,
     val refireCooldownMs: Int = 350,
     val filterMode: TriggerFilterMode = TriggerFilterMode.BLACKLIST,
     val blockApps: List<TriggerAppEntry> = emptyList(),

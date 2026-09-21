@@ -391,6 +391,8 @@ class ShortcutHubAccessibilityService : AccessibilityService() {
     private fun showOverlay() {
         if (overlayView != null || isShowingOverlay || !HubSwitch.isEnabled(this)) return
         isShowingOverlay = true
+        // Now, not after the layout has loaded, so the buzz lands with the gesture.
+        vibrateForHubOpen(this, triggerConfig)
 
         // Arm the grace window before the async state load, so a SystemUI-hosted trigger (the
         // floating accessibility button) can't have its own window event dismiss the overlay it
