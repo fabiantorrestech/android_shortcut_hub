@@ -3,6 +3,7 @@ package com.fabiantorrestech.androidshortcuthub
 import android.appwidget.AppWidgetManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -118,6 +120,16 @@ internal fun OverlayTileInspector(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // Per-tile undo. It used to sit in the editor's bottom bar labelled "Cancel", next to
+        // Save, where it read as "cancel the save" rather than "undo this one tile". It belongs
+        // with the tile it acts on, and only shows when that tile differs from its saved version.
+        if (editorState.isTileDirty(tile.id)) {
+            TextButton(
+                onClick = { editorState.revertTile(tile.id) },
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+            ) { Text("Revert this tile") }
+        }
 
         // ── Rename (not available for sliders) ──────────────────────────────
         var labelDraft by remember(tile.id) { mutableStateOf(tile.customLabel ?: "") }

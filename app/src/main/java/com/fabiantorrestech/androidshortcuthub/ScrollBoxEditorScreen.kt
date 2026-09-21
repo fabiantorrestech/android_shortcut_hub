@@ -358,15 +358,24 @@ private fun ScrollBoxGridSizeContent(innerEditorState: OverlayEditorState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+        // Shrinking the inner grid deletes every child that no longer fits. Warn before, not after.
+        val pendingRows = rowsInput.toIntOrNull()?.coerceIn(1, 20) ?: innerEditorState.gridRows
+        val pendingCols = colsInput.toIntOrNull()?.coerceIn(1, 12) ?: innerEditorState.gridColumns
+        val tilesLost = innerEditorState.tilesLostByGridSize(pendingRows, pendingCols)
+        if (tilesLost > 0) {
+            Text(
+                text = "Removes $tilesLost ${if (tilesLost == 1) "tile that no longer fits" else "tiles that no longer fit"}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         OutlinedButton(
             onClick = {
-                val rows = rowsInput.toIntOrNull()?.coerceIn(1, 20) ?: innerEditorState.gridRows
-                val cols = colsInput.toIntOrNull()?.coerceIn(1, 12) ?: innerEditorState.gridColumns
-                rowsInput = rows.toString()
-                colsInput = cols.toString()
-                innerEditorState.applyGridSize(rows, cols)
+                rowsInput = pendingRows.toString()
+                colsInput = pendingCols.toString()
+                innerEditorState.applyGridSize(pendingRows, pendingCols)
             },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Apply Grid Size") }
+        ) { Text(if (tilesLost > 0) "Apply and remove $tilesLost" else "Apply Grid Size") }
     }
 }

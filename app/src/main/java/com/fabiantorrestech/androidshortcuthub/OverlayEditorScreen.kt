@@ -60,11 +60,15 @@ import kotlinx.coroutines.flow.collectLatest
 /**
  * In-app layout editor screen.
  *
- * Layout (top to bottom):
- * 1. Scrollable action bar — "+ App", "+ Widget", "+ Intent", "+ Volume Slider", "+ Brightness Slider"
- * 2. Tile inspector (scrollable, weight 1f) — shown when a tile is selected
- * 3. Grid preview (dark bg, weight 1.2f) — EditorPreview mode
- * 4. Save bar (per-tile Cancel appears when the selected tile has unsaved edits)
+ * Portrait, top to bottom: top bar (back, title, appearance/grid popups, Save) → Portrait/Landscape
+ * tabs → grid preview → scrollable add-tile row → tile inspector. Landscape puts the preview and
+ * the controls side by side instead.
+ *
+ * Save is the single commit point for the whole editor and appears in the top bar only while
+ * [OverlayEditorState.hasUnsavedChanges] is true for either orientation. Because that value is
+ * derived from a comparison against the saved baseline rather than a flag edits set, undoing a
+ * change by hand makes the button go away again. Leaving with changes pending prompts; per-tile
+ * undo lives in the inspector next to the tile it affects.
  */
 @Composable
 internal fun OverlayEditorScreen(
@@ -109,12 +113,6 @@ internal fun OverlayEditorScreen(
         return
     }
 
-    // Declared after the two early returns above, so it is only composed when no container editor
-    // is open. Compose dispatches BackHandlers LIFO by composition depth, which means the
-    // sub-editor's own handler wins while it is on screen and this one takes over once it closes —
-    // exactly one level of unwind per press.
-    BackHandler { onBack() }
-
     fun syncGlobalsFromActive() {
         val from = editorState
         val to = if (activeTab == OverlayOrientation.PORTRAIT) landscapeEditorState else portraitEditorState
@@ -127,11 +125,38 @@ internal fun OverlayEditorScreen(
         to.defaultTextColorHex = from.defaultTextColorHex
     }
 
+    /** The one place the editor persists anything. Both orientations are written together. */
+    fun saveAll() {
+        syncGlobalsFromActive()
+        val portraitCommitted = portraitEditorState.commit()
+        val landscapeCommitted = landscapeEditorState.commit()
+        onSave(portraitCommitted, landscapeCommitted)
+        portraitEditorState.markSaved(portraitCommitted)
+        landscapeEditorState.markSaved(landscapeCommitted)
+    }
+
+    // Derived, so undoing an edit by hand takes the Save button away again and leaving is silent.
+    val anyUnsaved = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges
+    var showExitPrompt by remember { mutableStateOf(false) }
+
+    /**
+     * Leaving used to discard the draft without a word: MainActivity drops LayoutTab from
+     * composition, taking both editor states with it. Ask first when there is something to lose.
+     */
+    fun attemptExit() {
+        if (anyUnsaved) showExitPrompt = true else onBack()
+    }
+
+    // Declared after the two early returns above, so it is only composed when no container editor
+    // is open. Compose dispatches BackHandlers LIFO by composition depth, which means the
+    // sub-editor's own handler wins while it is on screen and this one takes over once it closes —
+    // exactly one level of unwind per press.
+    BackHandler { attemptExit() }
+
     LaunchedEffect(Unit) {
         OverlayEditorState.defaultFontEvents().collectLatest { (uri, name) ->
             editorState.defaultFontUri = uri
             editorState.defaultFontName = name
-            editorState.hasUnsavedChanges = true
             syncGlobalsFromActive()
         }
     }
@@ -379,9 +404,34 @@ internal fun OverlayEditorScreen(
     )
     val isLandscapeEditor = configuration.screenWidthDp > configuration.screenHeightDp
 
+    if (showExitPrompt) {
+        AlertDialog(
+            onDismissRequest = { showExitPrompt = false },
+            title = { Text("Save changes?") },
+            text = { Text("You have unsaved changes to this layout.") },
+            confirmButton = {
+                Button(onClick = {
+                    showExitPrompt = false
+                    saveAll()
+                    onBack()
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showExitPrompt = false
+                    // reset() restores each state to its baseline. Both orientations are reverted
+                    // because Save writes both, so a discard has to undo both too.
+                    portraitEditorState.reset()
+                    landscapeEditorState.reset()
+                    onBack()
+                }) { Text("Discard") }
+            },
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
 
-        // ── Top bar: back arrow | unsaved label | popup buttons ─────────────
+        // ── Top bar: back arrow | title | popup buttons | Save ──────────────
         var gridPopupOpen by remember { mutableStateOf(false) }
         var appearancePopupOpen by remember { mutableStateOf(false) }
 
@@ -392,15 +442,12 @@ internal fun OverlayEditorScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = { attemptExit() }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
-            val anyUnsaved = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges
             Text(
-                text = if (anyUnsaved) "Unsaved changes" else "All changes saved",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (anyUnsaved) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "Layout",
+                style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
             )
             // Appearance popup
@@ -432,6 +479,11 @@ internal fun OverlayEditorScreen(
                 ) {
                     GridPopupContent(editorState)
                 }
+            }
+            // The editor's only Save. Present only while something differs from the last save, so
+            // its appearance is itself the "you have changes" signal the old text label carried.
+            if (anyUnsaved) {
+                Button(onClick = { saveAll() }) { Text("Save") }
             }
         }
 
@@ -698,35 +750,6 @@ internal fun OverlayEditorScreen(
                             onEditScrollBox = { editingScrollBoxId = it },
                             onEditWidgetStack = { editingWidgetStackId = it },
                         )
-                    }
-
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            val selectedId = editorState.selectedTileId
-                            if (selectedId != null && editorState.isTileDirty(selectedId)) {
-                                OutlinedButton(
-                                    onClick = { editorState.revertTile(selectedId) },
-                                    modifier = Modifier.weight(1f),
-                                ) { Text("Cancel") }
-                            }
-                            Button(
-                                onClick = {
-                                    syncGlobalsFromActive()
-                                    val portraitCommitted = portraitEditorState.commit()
-                                    val landscapeCommitted = landscapeEditorState.commit()
-                                    onSave(portraitCommitted, landscapeCommitted)
-                                    portraitEditorState.markSaved(portraitCommitted)
-                                    landscapeEditorState.markSaved(landscapeCommitted)
-                                },
-                                enabled = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Save") }
-                        }
                     }
                 }
             }
@@ -999,35 +1022,6 @@ internal fun OverlayEditorScreen(
                     onEditWidgetStack = { editingWidgetStackId = it },
                 )
             }
-
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val selectedId = editorState.selectedTileId
-                    if (selectedId != null && editorState.isTileDirty(selectedId)) {
-                        OutlinedButton(
-                            onClick = { editorState.revertTile(selectedId) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Cancel") }
-                    }
-                    Button(
-                        onClick = {
-                            syncGlobalsFromActive()
-                            val portraitCommitted = portraitEditorState.commit()
-                            val landscapeCommitted = landscapeEditorState.commit()
-                            onSave(portraitCommitted, landscapeCommitted)
-                            portraitEditorState.markSaved(portraitCommitted)
-                            landscapeEditorState.markSaved(landscapeCommitted)
-                        },
-                        enabled = portraitEditorState.hasUnsavedChanges || landscapeEditorState.hasUnsavedChanges,
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Save") }
-                }
-            }
         }
     }
 }
@@ -1061,16 +1055,26 @@ private fun GridPopupContent(editorState: OverlayEditorState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+        // Shrinking the grid deletes every tile that no longer fits. Say so before it happens
+        // rather than after, since the only undo is leaving the editor without saving.
+        val pendingRows = rowsInput.toIntOrNull()?.coerceIn(1, 24) ?: editorState.gridRows
+        val pendingCols = colsInput.toIntOrNull()?.coerceIn(1, 16) ?: editorState.gridColumns
+        val tilesLost = editorState.tilesLostByGridSize(pendingRows, pendingCols)
+        if (tilesLost > 0) {
+            Text(
+                text = "Removes $tilesLost ${if (tilesLost == 1) "tile that no longer fits" else "tiles that no longer fit"}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         OutlinedButton(
             onClick = {
-                val rows = rowsInput.toIntOrNull()?.coerceIn(1, 24) ?: editorState.gridRows
-                val cols = colsInput.toIntOrNull()?.coerceIn(1, 16) ?: editorState.gridColumns
-                rowsInput = rows.toString()
-                colsInput = cols.toString()
-                editorState.applyGridSize(rows, cols)
+                rowsInput = pendingRows.toString()
+                colsInput = pendingCols.toString()
+                editorState.applyGridSize(pendingRows, pendingCols)
             },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Apply Grid Size") }
+        ) { Text(if (tilesLost > 0) "Apply and remove $tilesLost" else "Apply Grid Size") }
 
         Text(
             "Background Opacity  ${"%.0f".format(editorState.overlayBackgroundAlpha * 100)}%",
@@ -1078,7 +1082,7 @@ private fun GridPopupContent(editorState: OverlayEditorState) {
         )
         Slider(
             value = editorState.overlayBackgroundAlpha,
-            onValueChange = { editorState.overlayBackgroundAlpha = it; editorState.hasUnsavedChanges = true },
+            onValueChange = { editorState.overlayBackgroundAlpha = it },
             valueRange = 0f..0.9f,
         )
     }
@@ -1108,7 +1112,7 @@ private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultF
         Text("Text size: ${"%.2f".format(editorState.defaultTextScale)}x", style = MaterialTheme.typography.bodySmall)
         Slider(
             value = editorState.defaultTextScale,
-            onValueChange = { editorState.defaultTextScale = it; editorState.hasUnsavedChanges = true },
+            onValueChange = { editorState.defaultTextScale = it },
             valueRange = 0.5f..3.0f,
         )
 
@@ -1120,7 +1124,7 @@ private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultF
             Text("Bold text", style = MaterialTheme.typography.bodySmall)
             Switch(
                 checked = editorState.defaultBoldText,
-                onCheckedChange = { editorState.defaultBoldText = it; editorState.hasUnsavedChanges = true },
+                onCheckedChange = { editorState.defaultBoldText = it },
             )
         }
 
@@ -1134,7 +1138,6 @@ private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultF
                 onClick = {
                     editorState.defaultFontUri = null
                     editorState.defaultFontName = null
-                    editorState.hasUnsavedChanges = true
                 },
                 modifier = Modifier.weight(1f),
             ) { Text("Clear") }
@@ -1153,7 +1156,7 @@ private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultF
                     rowItems.forEach { (label, mode) ->
                         val selected = editorState.defaultTextColorMode == mode
                         OutlinedButton(
-                            onClick = { editorState.defaultTextColorMode = mode; editorState.hasUnsavedChanges = true },
+                            onClick = { editorState.defaultTextColorMode = mode },
                             modifier = Modifier.weight(1f),
                             colors = if (selected) androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -1168,7 +1171,6 @@ private fun AppearancePopupContent(editorState: OverlayEditorState, openDefaultF
                 value = editorState.defaultTextColorHex ?: "",
                 onValueChange = {
                     editorState.defaultTextColorHex = it.trim().take(9).ifBlank { null }
-                    editorState.hasUnsavedChanges = true
                 },
                 label = { Text("Hex color") },
                 placeholder = { Text("#FFFFFF") },

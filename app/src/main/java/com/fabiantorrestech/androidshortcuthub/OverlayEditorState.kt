@@ -1,5 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,7 +45,31 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
     val tiles = mutableStateListOf<TileState>().apply { addAll(savedState.tiles) }
     var selectedTileId by mutableStateOf<Int?>(null)
     var nextTileId by mutableIntStateOf(savedState.nextTileId)
-    var hasUnsavedChanges by mutableStateOf(false)
+
+    /**
+     * True when the working state actually differs from [savedState].
+     *
+     * Derived rather than a flag that each edit sets, so undoing an edit by hand clears it: move a
+     * tile and move it back, and the editor is clean again. It also means a write that changes
+     * nothing cannot dirty the layout - notably a container editor folding an unchanged child list
+     * back into its parent on exit, which used to leave "Unsaved changes" behind after merely
+     * opening and closing a widget stack.
+     *
+     * [nextTileId] is deliberately excluded: it is an internal counter, not something the user can
+     * see or revert.
+     */
+    val hasUnsavedChanges: Boolean by derivedStateOf {
+        tiles.toList() != savedState.tiles ||
+            gridRows != savedState.gridRows ||
+            gridColumns != savedState.gridColumns ||
+            overlayBackgroundAlpha != savedState.overlayBackgroundAlpha ||
+            defaultTextScale != savedState.defaultTextScale ||
+            defaultBoldText != savedState.defaultBoldText ||
+            defaultFontUri != savedState.defaultFontUri ||
+            defaultFontName != savedState.defaultFontName ||
+            defaultTextColorMode != savedState.defaultTextColorMode ||
+            defaultTextColorHex != savedState.defaultTextColorHex
+    }
 
     // ── Core operations ──────────────────────────────────────────────────────
 
@@ -83,7 +108,6 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
         defaultFontName = savedState.defaultFontName
         defaultTextColorMode = savedState.defaultTextColorMode
         defaultTextColorHex = savedState.defaultTextColorHex
-        hasUnsavedChanges = false
     }
 
     /**
@@ -92,7 +116,6 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
      */
     fun markSaved(committed: OverlayUiState) {
         savedState = committed
-        hasUnsavedChanges = false
     }
 
     /**
@@ -107,8 +130,8 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
 
     /**
      * Reverts tile [id] to its last-saved state and deselects it. A tile added since the last save
-     * has no saved counterpart, so it is removed. Recomputes [hasUnsavedChanges] afterward because
-     * other tiles/globals may still differ from the baseline.
+     * has no saved counterpart, so it is removed. [hasUnsavedChanges] re-derives itself, so the
+     * editor correctly stays dirty when other tiles or globals still differ from the baseline.
      */
     fun revertTile(id: Int) {
         val index = tiles.indexOfFirst { it.id == id }
@@ -117,25 +140,6 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
             if (saved == null) tiles.removeAt(index) else tiles[index] = saved
         }
         selectedTileId = null
-        recomputeDirty()
-    }
-
-    /**
-     * Re-derives [hasUnsavedChanges] by comparing the working state against [savedState]. Used after
-     * a partial revert; the internal [nextTileId] counter is intentionally excluded (not user-visible).
-     */
-    fun recomputeDirty() {
-        hasUnsavedChanges =
-            tiles.toList() != savedState.tiles ||
-            gridRows != savedState.gridRows ||
-            gridColumns != savedState.gridColumns ||
-            overlayBackgroundAlpha != savedState.overlayBackgroundAlpha ||
-            defaultTextScale != savedState.defaultTextScale ||
-            defaultBoldText != savedState.defaultBoldText ||
-            defaultFontUri != savedState.defaultFontUri ||
-            defaultFontName != savedState.defaultFontName ||
-            defaultTextColorMode != savedState.defaultTextColorMode ||
-            defaultTextColorHex != savedState.defaultTextColorHex
     }
 
     /**
@@ -144,23 +148,24 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
     fun applyGridSize(rows: Int, cols: Int) {
         gridRows = rows
         gridColumns = cols
-        tiles.removeAll { tile ->
-            tile.row >= rows ||
-                tile.column >= cols ||
-                tile.row + tile.rowSpan > rows ||
-                tile.column + tile.columnSpan > cols
-        }
+        tiles.removeAll { !it.fitsGrid(rows, cols) }
         if (selectedTileId != null && tiles.none { it.id == selectedTileId }) {
             selectedTileId = null
         }
-        hasUnsavedChanges = true
     }
+
+    /**
+     * How many tiles [applyGridSize] would delete at this size, so the grid controls can warn
+     * before the user commits. Shrinking the grid is otherwise silently destructive, with no undo
+     * short of leaving without saving. Shares [fitsGrid] with [applyGridSize] so the count and the
+     * deletion can never disagree.
+     */
+    fun tilesLostByGridSize(rows: Int, cols: Int): Int = tiles.count { !it.fitsGrid(rows, cols) }
 
     fun updateTile(id: Int, transform: (TileState) -> TileState) {
         val index = tiles.indexOfFirst { it.id == id }
         if (index >= 0) {
             tiles[index] = transform(tiles[index])
-            hasUnsavedChanges = true
         }
     }
 
@@ -168,13 +173,11 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
         val removed = tiles.removeAll { it.id == id }
         if (removed) {
             if (selectedTileId == id) selectedTileId = null
-            hasUnsavedChanges = true
         }
     }
 
     fun addTile(tile: TileState) {
         tiles += tile
-        hasUnsavedChanges = true
     }
 
     /**
@@ -279,6 +282,10 @@ internal class OverlayEditorState(initialSavedState: OverlayUiState) {
         }
     }
 }
+
+/** True when the tile lies wholly inside a [rows]×[cols] grid. */
+private fun TileState.fitsGrid(rows: Int, cols: Int): Boolean =
+    row < rows && column < cols && row + rowSpan <= rows && column + columnSpan <= cols
 
 /**
  * Converts a widget provider's declared minimum size (dp) into a grid span for a
