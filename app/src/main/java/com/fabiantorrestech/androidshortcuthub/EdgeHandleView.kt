@@ -1,5 +1,6 @@
 package com.fabiantorrestech.androidshortcuthub
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
@@ -13,12 +14,25 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowInsets
+import android.view.animation.LinearInterpolator
 import kotlin.math.abs
 
 private const val TAG = "ShortcutHubEdge"
 private const val REVEAL_DURATION_MS = 120L
 private const val FADE_DURATION_MS = 400L
 private const val PEEK_HOLD_MS = 1_200L
+
+/** How fast the bar answers a touch-down; short enough to read as instant. */
+private const val TOUCH_IN_MS = 80L
+
+/** How fast the bar retreats after a gesture that did not fire. */
+private const val FADE_BACK_MS = 200L
+
+/** Where a bare touch lands on the way from resting to touched opacity, before any travel. */
+private const val TOUCH_BASE_FRACTION = 0.4f
+
+/** How much wider than its resting width the bar has grown by the time the gesture fires. */
+private const val STRETCH_MAX_FACTOR = 2.5f
 
 /**
  * The thin strip parked against a screen edge that summons the hub.
@@ -78,6 +92,15 @@ internal class EdgeHandleView(
     private var tracking = false
     private var fired = false
 
+    /**
+     * 0..1: how far the current gesture has got towards firing. Drives the bar's width (drawn in
+     * onDraw, so every change invalidates) and, outside preview, its opacity.
+     */
+    private var progress = 0f
+
+    /** The hold-to-fire fill, or a fade-back. Never both: each cancels the other. */
+    private var progressAnimator: ValueAnimator? = null
+
     private val longPressRunnable = Runnable {
         if (tracking && !fired) fire()
     }
@@ -115,24 +138,88 @@ internal class EdgeHandleView(
         animate().alpha(target).setDuration(durationMs).start()
     }
 
-    /** Settles the bar to whatever opacity it should sit at when untouched. */
+    /** Settles the bar to whatever width and opacity it should sit at when untouched. */
     private fun applyIdleAlpha() {
         animate().cancel()
         removeCallbacks(fadeOutRunnable)
-        alpha = if (previewMode) config.activeAlpha else restingAlpha()
+        stopProgressAnimation()
+        progress = 0f
+        alpha = idleAlpha()
         invalidate()
     }
 
-    private fun reveal() {
-        if (previewMode) return
-        removeCallbacks(fadeOutRunnable)
-        animateTo(activeAlpha(), REVEAL_DURATION_MS)
+    private fun idleAlpha(): Float = if (previewMode) config.activeAlpha else restingAlpha()
+
+    /**
+     * Opacity for a gesture [p] of the way to firing. A bare touch already shows - part of the way
+     * from resting to touched - and it climbs the rest of the way as the gesture nears firing.
+     */
+    private fun touchedAlpha(p: Float): Float {
+        val rest = restingAlpha()
+        val base = rest + (activeAlpha() - rest) * TOUCH_BASE_FRACTION
+        return base + (activeAlpha() - base) * p
     }
 
-    private fun scheduleFadeOut() {
-        if (previewMode) return
+    private fun setProgress(p: Float) {
+        if (p == progress) return
+        progress = p
+        // Width is geometry, not a render property, so unlike alpha it needs a fresh onDraw.
+        invalidate()
+    }
+
+    /** Shows the gesture [p] of the way to firing, directly: it follows the finger, not a curve. */
+    private fun showProgress(p: Float) {
+        val clamped = p.coerceIn(0f, 1f)
+        setProgress(clamped)
+        if (!previewMode) {
+            animate().cancel()
+            alpha = touchedAlpha(clamped)
+        }
+    }
+
+    private fun onTouchDown() {
         removeCallbacks(fadeOutRunnable)
-        postDelayed(fadeOutRunnable, config.revealLingerMs.toLong())
+        stopProgressAnimation()
+        setProgress(0f)
+        if (!previewMode) animateTo(touchedAlpha(0f), TOUCH_IN_MS)
+    }
+
+    /**
+     * The gesture ended without firing, or was abandoned: shrink and fade straight back. Prompt on
+     * purpose - a bar that lingered after an early release read as the hub being about to open.
+     */
+    private fun fadeBack() {
+        stopProgressAnimation()
+        animate().cancel()
+        val fromProgress = progress
+        val fromAlpha = alpha
+        val toAlpha = idleAlpha()
+        if (fromProgress == 0f && fromAlpha == toAlpha) return
+        progressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = FADE_BACK_MS
+            addUpdateListener {
+                val f = it.animatedFraction
+                setProgress(fromProgress * (1f - f))
+                alpha = fromAlpha + (toAlpha - fromAlpha) * f
+            }
+            start()
+        }
+    }
+
+    /** Hold-to-fire has no travel to follow, so the bar fills over the hold time instead. */
+    private fun startHoldFill() {
+        stopProgressAnimation()
+        progressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = config.longPressMs.toLong()
+            interpolator = LinearInterpolator()
+            addUpdateListener { showProgress(it.animatedValue as Float) }
+            start()
+        }
+    }
+
+    private fun stopProgressAnimation() {
+        progressAnimator?.cancel()
+        progressAnimator = null
     }
 
     /**
@@ -158,12 +245,17 @@ internal class EdgeHandleView(
         // alpha.) A view at alpha 0 costs nothing to composite anyway.
         val protrusion = dp(config.protrusionDp).toFloat()
         if (protrusion <= 0f || width == 0 || height == 0) return
+        // Widens as the gesture nears firing, but never past the touch strip it lives in.
+        val stretched = (protrusion * STRETCH_MAX_FACTOR)
+            .coerceAtMost(width.toFloat())
+            .coerceAtLeast(protrusion)
+        val barWidth = protrusion + (stretched - protrusion) * progress
 
         // The drawn bar hugs the screen edge; the rest of the window is invisible touch area.
         if (side == EdgeSide.LEFT) {
-            barRect.set(0f, 0f, protrusion, height.toFloat())
+            barRect.set(0f, 0f, barWidth, height.toFloat())
         } else {
-            barRect.set(width - protrusion, 0f, width.toFloat(), height.toFloat())
+            barRect.set(width - barWidth, 0f, width.toFloat(), height.toFloat())
         }
         val radius = dp(config.cornerRadiusDp).toFloat()
         canvas.drawRoundRect(barRect, radius, radius, paint)
@@ -229,9 +321,10 @@ internal class EdgeHandleView(
                 downTime = event.eventTime
                 tracking = true
                 fired = false
-                reveal()
+                onTouchDown()
                 if (config.usesLongPress) {
                     postDelayed(longPressRunnable, config.longPressMs.toLong())
+                    startHoldFill()
                 }
             }
 
@@ -239,22 +332,36 @@ internal class EdgeHandleView(
                 if (!tracking || fired) return
                 val dx = event.x - downX
                 val dy = event.y - downY
-                if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+                val wandered = abs(dx) > touchSlop || abs(dy) > touchSlop
+                if (wandered) {
                     removeCallbacks(longPressRunnable)
                 }
                 val slop = dp(config.activationSlopDp).toFloat()
 
-                if (config.usesDragAlong && abs(dy) >= slop && abs(dy) > abs(dx)) {
-                    // Travel parallel to the edge. SystemUI cancels Back the moment vertical
-                    // travel dominates, so this can never be confused for a back swipe.
-                    fire()
+                if (config.usesDragAlong) {
+                    // Travel along the edge, less any sideways drift. It only nears full as the
+                    // fire condition below nears being met, and it falls as the finger heads back
+                    // towards where it started - so swiping back visibly backs the bar off.
+                    showProgress((abs(dy) - abs(dx)) / slop)
+                    if (abs(dy) >= slop && abs(dy) > abs(dx)) {
+                        // Travel parallel to the edge. SystemUI cancels Back the moment vertical
+                        // travel dominates, so this can never be confused for a back swipe.
+                        fire()
+                    }
                 } else if (config.usesInwardSwipe) {
                     val inward = if (side == EdgeSide.LEFT) dx else -dx
                     if (abs(dy) > abs(dx) && abs(dy) > touchSlop) {
                         cancelGesture()
-                    } else if (inward >= slop) {
-                        fire()
+                        fadeBack()
+                    } else {
+                        showProgress(inward / slop)
+                        if (inward >= slop) fire()
                     }
+                } else if (wandered) {
+                    // Hold or tap: movement is already fatal to both, so let the bar go now
+                    // rather than when the finger finally lifts.
+                    cancelGesture()
+                    fadeBack()
                 }
             }
 
@@ -267,18 +374,21 @@ internal class EdgeHandleView(
                     fire()
                 }
                 tracking = false
-                scheduleFadeOut()
+                // Whatever did not fire goes straight back. One that did is about to be hidden
+                // by the hub opening; this covers the case where the hub does not open.
+                fadeBack()
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 cancelGesture()
-                scheduleFadeOut()
+                fadeBack()
             }
         }
     }
 
     private fun cancelGesture() {
         removeCallbacks(longPressRunnable)
+        stopProgressAnimation()
         tracking = false
     }
 
@@ -287,6 +397,9 @@ internal class EdgeHandleView(
         fired = true
         tracking = false
         removeCallbacks(longPressRunnable)
+        stopProgressAnimation()
+        // Land on full for the moment before the hub opens and the handle stands down.
+        showProgress(1f)
         // No buzz here: the hub buzzes as it opens (vibrateForHubOpen), for every trigger alike.
         onTrigger?.invoke(source)
     }
@@ -294,6 +407,7 @@ internal class EdgeHandleView(
     override fun onDetachedFromWindow() {
         // A leaked animator or pending callback on a removed WindowManager view is a slow leak.
         animate().cancel()
+        stopProgressAnimation()
         removeCallbacks(longPressRunnable)
         removeCallbacks(fadeOutRunnable)
         super.onDetachedFromWindow()

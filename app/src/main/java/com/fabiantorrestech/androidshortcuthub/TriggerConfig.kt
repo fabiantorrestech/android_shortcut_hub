@@ -49,10 +49,10 @@ enum class EdgeVisibility {
     /** Never drawn. The band still receives touches. */
     INVISIBLE,
 
-    /** Invisible at rest; fades in on contact, fades out after the linger delay. */
+    /** Invisible at rest; shows on contact and fades back as soon as the finger lifts. */
     REVEAL_ON_CONTACT,
 
-    /** Rests dim, brightens on contact, settles back after the linger delay. */
+    /** Rests dim, brightens on contact, settles back as soon as the finger lifts. */
     DIM,
 
     /** Always drawn at the resting alpha, brightening on contact. */
@@ -87,7 +87,6 @@ data class EdgeHandleConfig(
     val activationSlopDp: Int = 32,
     val longPressMs: Int = 260,
     val visibility: EdgeVisibility = EdgeVisibility.REVEAL_ON_CONTACT,
-    val revealLingerMs: Int = 2500,
     val restingAlpha: Float = 0.35f,
     val activeAlpha: Float = 0.85f,
     /** null = follow the theme's onSurface colour. */

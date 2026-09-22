@@ -596,16 +596,6 @@ private fun EdgeHandleCard(
         )
 
         if (handle.visibility != EdgeVisibility.INVISIBLE) {
-            if (handle.visibility != EdgeVisibility.ALWAYS_VISIBLE) {
-                SliderRow(
-                    label = "Stay visible after touch",
-                    value = handle.revealLingerMs.toFloat(),
-                    range = 0f..8000f,
-                    enabled = enabled,
-                    valueLabel = { "${(it / 1000f * 10).roundToInt() / 10f} s" },
-                    onCommit = { onHandleChange(handle.copy(revealLingerMs = it.roundToInt())) },
-                )
-            }
             if (handle.visibility == EdgeVisibility.DIM ||
                 handle.visibility == EdgeVisibility.ALWAYS_VISIBLE
             ) {

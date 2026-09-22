@@ -90,7 +90,6 @@ object TriggerRepository {
             put("activationSlopDp", handle.activationSlopDp)
             put("longPressMs", handle.longPressMs)
             put("visibility", handle.visibility.name)
-            put("revealLingerMs", handle.revealLingerMs)
             put("restingAlpha", handle.restingAlpha.toDouble())
             put("activeAlpha", handle.activeAlpha.toDouble())
             handle.colorHex?.let { put("colorHex", it) }
@@ -153,8 +152,6 @@ object TriggerRepository {
             visibility = EdgeVisibility.entries.firstOrNull {
                 it.name == obj.optString("visibility")
             } ?: fallback.visibility,
-            revealLingerMs = obj.optInt("revealLingerMs", fallback.revealLingerMs)
-                .coerceIn(0, 15_000),
             restingAlpha = obj.optDouble("restingAlpha", fallback.restingAlpha.toDouble())
                 .toFloat().coerceIn(0f, 1f),
             activeAlpha = obj.optDouble("activeAlpha", fallback.activeAlpha.toDouble())
