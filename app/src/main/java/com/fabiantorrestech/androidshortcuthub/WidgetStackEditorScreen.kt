@@ -74,6 +74,9 @@ internal fun WidgetStackEditorScreen(
     var showPageIndicator by remember(widgetStackId) { mutableStateOf(stack.showPageIndicator) }
     var autoRotate by remember(widgetStackId) { mutableStateOf(stack.autoRotate) }
     var autoRotateSeconds by remember(widgetStackId) { mutableIntStateOf(stack.autoRotateSeconds) }
+    var showRotateTimer by remember(widgetStackId) { mutableStateOf(stack.showRotateTimer) }
+    var rotateOnOpen by remember(widgetStackId) { mutableStateOf(stack.rotateOnOpen) }
+    var rotateOnOpenEvery by remember(widgetStackId) { mutableIntStateOf(stack.rotateOnOpenEvery) }
     // When set, the next completed bind replaces widgets[index] instead of appending (Refresh).
     var pendingRefreshIndex by remember(widgetStackId) { mutableStateOf<Int?>(null) }
     // When set, the "re-create this widget?" confirm dialog is shown for that index.
@@ -124,6 +127,9 @@ internal fun WidgetStackEditorScreen(
                 showPageIndicator = showPageIndicator,
                 autoRotate = autoRotate,
                 autoRotateSeconds = autoRotateSeconds,
+                showRotateTimer = showRotateTimer,
+                rotateOnOpen = rotateOnOpen,
+                rotateOnOpenEvery = rotateOnOpenEvery,
             ) ?: current
         }
         onBack()
@@ -260,6 +266,35 @@ internal fun WidgetStackEditorScreen(
                     value = autoRotateSeconds.toFloat(),
                     onValueChange = { autoRotateSeconds = it.toInt().coerceIn(3, 60) },
                     valueRange = 3f..60f,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Show timer", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = showRotateTimer, onCheckedChange = { showRotateTimer = it })
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Rotate on open", style = MaterialTheme.typography.bodyMedium)
+                Switch(checked = rotateOnOpen, onCheckedChange = { rotateOnOpen = it })
+            }
+            if (rotateOnOpen) {
+                Text(
+                    if (rotateOnOpenEvery == 1) "Next widget every open" else "Next widget every $rotateOnOpenEvery opens",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Slider(
+                    value = rotateOnOpenEvery.toFloat(),
+                    onValueChange = { rotateOnOpenEvery = it.toInt().coerceIn(1, 10) },
+                    valueRange = 1f..10f,
+                    steps = 8,
                 )
             }
         }

@@ -236,6 +236,9 @@ internal object OverlayStateRepository {
                 put("showPageIndicator", tile.showPageIndicator)
                 put("autoRotate", tile.autoRotate)
                 put("autoRotateSeconds", tile.autoRotateSeconds)
+                put("rotateOnOpen", tile.rotateOnOpen)
+                put("rotateOnOpenEvery", tile.rotateOnOpenEvery)
+                put("showRotateTimer", tile.showRotateTimer)
                 put(
                     "widgets",
                     JSONArray().also { arr -> tile.widgets.forEach { arr.put(serializeTile(it)) } },
@@ -318,7 +321,10 @@ internal object OverlayStateRepository {
                 val showPageIndicator = item.optBoolean("showPageIndicator", true)
                 val autoRotate = item.optBoolean("autoRotate", false)
                 val autoRotateSeconds = item.optInt("autoRotateSeconds", 8).coerceIn(3, 60)
-                WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel)
+                val rotateOnOpen = item.optBoolean("rotateOnOpen", false)
+                val rotateOnOpenEvery = item.optInt("rotateOnOpenEvery", 1).coerceIn(1, 10)
+                val showRotateTimer = item.optBoolean("showRotateTimer", true)
+                WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel, rotateOnOpen, rotateOnOpenEvery, showRotateTimer)
             }
             TILE_TYPE_APP -> {
                 val label = item.optString("label").takeIf { it.isNotBlank() } ?: return null

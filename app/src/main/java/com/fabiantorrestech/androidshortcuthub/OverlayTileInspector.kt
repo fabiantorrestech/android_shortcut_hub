@@ -341,6 +341,26 @@ internal fun OverlayTileInspector(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Rotate on open", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = tile.rotateOnOpen,
+                        onCheckedChange = { checked ->
+                            editorState.updateTile(tile.id) { t -> (t as WidgetStackTileState).copy(rotateOnOpen = checked) }
+                        },
+                    )
+                }
+                if (tile.rotateOnOpen) {
+                    Text(
+                        "Every ${if (tile.rotateOnOpenEvery == 1) "open" else "${tile.rotateOnOpenEvery} opens"} — change in \"Edit stack\".",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

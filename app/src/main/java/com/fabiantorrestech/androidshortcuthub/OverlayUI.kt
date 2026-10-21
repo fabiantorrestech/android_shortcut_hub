@@ -509,6 +509,11 @@ internal data class WidgetStackTileState(
     val autoRotate: Boolean = false,
     val autoRotateSeconds: Int = 8,
     override val customLabel: String? = null,
+    /** Every [rotateOnOpenEvery] hub opens, start on the next widget. See [WidgetStackPageStore]. */
+    val rotateOnOpen: Boolean = false,
+    val rotateOnOpenEvery: Int = 1,
+    /** Countdown ring beside the page dots while auto-rotate is on. */
+    val showRotateTimer: Boolean = true,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null
@@ -632,6 +637,8 @@ internal fun OverlayContent(
     val activeOrientation = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
         OverlayOrientation.LANDSCAPE else OverlayOrientation.PORTRAIT
     val initialState = if (activeOrientation == OverlayOrientation.LANDSCAPE) landscapeState else portraitState
+    // Outside the orientation key: rotating the screen is not a new open of the hub.
+    val hubSessionId = remember { WidgetStackPageStore.beginHubSession() }
 
     key(activeOrientation) {
     val context = LocalContext.current
@@ -1353,6 +1360,7 @@ internal fun OverlayContent(
             },
             dismissOnWidgetActivity = initialState.dismissOnWidgetActivity,
             onWidgetActivated = { requestDismiss() },
+            hubSessionId = hubSessionId,
         )
 
         // D-pad

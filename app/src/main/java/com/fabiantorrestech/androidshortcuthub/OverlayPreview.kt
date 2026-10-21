@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -63,17 +64,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInRoot
@@ -134,6 +143,7 @@ internal fun OverlayGridPreview(
     widgetContent: @Composable BoxScope.(WidgetTileState) -> Unit = {},
     dismissOnWidgetActivity: Boolean = false,
     onWidgetActivated: (() -> Unit)? = null,
+    hubSessionId: Int? = null,
 ) {
     val view = LocalView.current
 
@@ -438,6 +448,7 @@ internal fun OverlayGridPreview(
                                                 modifier = Modifier.fillMaxSize(),
                                                 dismissOnWidgetActivity = dismissOnWidgetActivity,
                                                 onWidgetActivated = onWidgetActivated,
+                                                hubSessionId = hubSessionId,
                                             )
                                         }
                                     }
@@ -1136,6 +1147,7 @@ internal fun WidgetStackRuntimeContent(
     modifier: Modifier = Modifier,
     dismissOnWidgetActivity: Boolean = false,
     onWidgetActivated: (() -> Unit)? = null,
+    hubSessionId: Int? = null,
 ) {
     val widgets = tile.widgets
     if (widgets.isEmpty()) {
@@ -1149,14 +1161,47 @@ internal fun WidgetStackRuntimeContent(
         return
     }
 
-    val pagerState = rememberPagerState(pageCount = { widgets.size })
+    val context = LocalContext.current
+    // Reopen on the widget the stack was left on (or the next one, when rotate-on-open is due).
+    val initialPage = remember(tile.id) { WidgetStackPageStore.pageForOpen(context, tile, hubSessionId) }
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { widgets.size })
 
-    // Auto-rotate: advance one page after the interval; re-keys on currentPage so a manual swipe
-    // resets the timer. Only runs while enabled and there's more than one widget.
-    if (tile.autoRotate && widgets.size > 1) {
-        LaunchedEffect(pagerState.currentPage, tile.autoRotateSeconds, widgets.size) {
-            delay(tile.autoRotateSeconds.coerceIn(3, 60) * 1000L)
-            pagerState.animateScrollToPage((pagerState.currentPage + 1) % widgets.size)
+    LaunchedEffect(pagerState, tile.id) {
+        launch {
+            pagerState.interactionSource.interactions.collect { interaction ->
+                if (interaction is DragInteraction.Start) WidgetStackPageStore.resetOpenCount(context, tile.id)
+            }
+        }
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            WidgetStackPageStore.savePage(context, tile.id, page)
+        }
+    }
+
+    // Auto-rotate: advance one page after the interval. Re-keys on settledPage, not currentPage:
+    // currentPage flips halfway through the slide, and re-keying there cancelled the slide and left
+    // the pager stuck between two widgets. Re-keying on isScrollInProgress restarts the timer after
+    // a manual swipe, including one that lands back on the same widget.
+    val rotateScope = rememberCoroutineScope()
+    val autoRotating = tile.autoRotate && widgets.size > 1
+    val showTimer = autoRotating && tile.showRotateTimer
+    // Remaining fraction of the current widget's turn, for the countdown ring. Read only while
+    // drawing, so updating it every frame redraws the ring without recomposing the stack.
+    val timerProgress = remember { mutableFloatStateOf(1f) }
+    if (autoRotating) {
+        LaunchedEffect(pagerState.settledPage, pagerState.isScrollInProgress, tile.autoRotateSeconds, widgets.size, showTimer) {
+            timerProgress.floatValue = 1f
+            if (pagerState.isScrollInProgress) return@LaunchedEffect
+            val intervalMs = tile.autoRotateSeconds.coerceIn(3, 60) * 1000L
+            if (showTimer) {
+                countDown(intervalMs) { timerProgress.floatValue = it }
+            } else {
+                delay(intervalMs)
+            }
+            // Launched outside this effect: the slide flips isScrollInProgress, which restarts this
+            // effect, and that must not cancel the slide midway.
+            rotateScope.launch {
+                pagerState.animateScrollToPage((pagerState.settledPage + 1) % widgets.size)
+            }
         }
     }
 
@@ -1175,10 +1220,13 @@ internal fun WidgetStackRuntimeContent(
                     ?.takeIf { widgets[page].shouldDismissOnActivity(dismissOnWidgetActivity) },
             )
         }
-        if (tile.showPageIndicator && widgets.size > 1) {
+        val showDots = tile.showPageIndicator && widgets.size > 1
+        if (showDots || showTimer) {
             PageDots(
                 count = widgets.size,
                 current = pagerState.currentPage,
+                showDots = showDots,
+                timerProgress = if (showTimer) ({ timerProgress.floatValue }) else null,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 6.dp),
@@ -1187,9 +1235,31 @@ internal fun WidgetStackRuntimeContent(
     }
 }
 
-/** Indicator-only row of page dots; the active page is a widened pill. */
+/** Counts [durationMs] down frame by frame, reporting the remaining fraction from 1 to 0. */
+private suspend fun countDown(durationMs: Long, onProgress: (Float) -> Unit) {
+    // Frame-driven rather than an animation, so it keeps real time even when the system
+    // animation scale is changed or animations are off.
+    val start = withFrameMillis { it }
+    while (true) {
+        val elapsed = withFrameMillis { it } - start
+        if (elapsed >= durationMs) break
+        onProgress(1f - elapsed.toFloat() / durationMs)
+    }
+    onProgress(0f)
+}
+
+/**
+ * Indicator-only row of page dots; the active page is a widened pill. [timerProgress], when set,
+ * adds a countdown ring after the dots. Nothing here handles touches, so taps reach the widget.
+ */
 @Composable
-private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
+private fun PageDots(
+    count: Int,
+    current: Int,
+    modifier: Modifier = Modifier,
+    showDots: Boolean = true,
+    timerProgress: (() -> Float)? = null,
+) {
     Row(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.25f), RoundedCornerShape(50))
@@ -1197,16 +1267,46 @@ private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        repeat(count) { i ->
-            val active = i == current
-            Box(
-                modifier = Modifier
-                    .size(width = if (active) 14.dp else 6.dp, height = 6.dp)
-                    .background(
-                        if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
-                        RoundedCornerShape(50),
-                    ),
-            )
+        if (showDots) {
+            repeat(count) { i ->
+                val active = i == current
+                Box(
+                    modifier = Modifier
+                        .size(width = if (active) 14.dp else 6.dp, height = 6.dp)
+                        .background(
+                            if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
+                            RoundedCornerShape(50),
+                        ),
+                )
+            }
         }
+        if (timerProgress != null) {
+            CountdownRing(progress = timerProgress)
+        }
+    }
+}
+
+/** Ring that empties clockwise from the top as [progress] goes from 1 to 0. */
+@Composable
+private fun CountdownRing(progress: () -> Float) {
+    val ringColor = MaterialTheme.colorScheme.primary
+    Canvas(modifier = Modifier.size(9.dp)) {
+        val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        val inset = stroke.width / 2
+        val arcSize = Size(size.width - stroke.width, size.height - stroke.width)
+        drawCircle(
+            color = Color.White.copy(alpha = 0.4f),
+            radius = (size.minDimension - stroke.width) / 2,
+            style = Stroke(width = stroke.width),
+        )
+        drawArc(
+            color = ringColor,
+            startAngle = -90f,
+            sweepAngle = 360f * progress(),
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = arcSize,
+            style = stroke,
+        )
     }
 }
