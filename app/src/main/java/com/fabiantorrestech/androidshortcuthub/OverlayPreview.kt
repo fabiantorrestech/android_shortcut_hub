@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.media.AudioManager
 import android.os.Build
+import android.os.SystemClock
 import android.view.View
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.BorderStroke
@@ -69,10 +70,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,6 +81,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.ImageBitmap
@@ -95,6 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -612,7 +614,7 @@ internal fun OverlayGridPreview(
                 modifier = Modifier
                     .offset(x = panelX, y = tileTop)
                     .graphicsLayer { alpha = fanOutAlpha }
-                    .blur(fanOutBlur),
+                    .deferredBlur { fanOutBlur },
             )
         }
     }
@@ -1293,17 +1295,40 @@ internal fun TileOutlineOverlay(
     )
 }
 
-/** Counts [durationMs] down frame by frame, reporting the remaining fraction from 1 to 0. */
+/**
+ * Counts [durationMs] down, reporting the remaining fraction from 1 to 0 every [TIMER_TICK_MS].
+ * Clock-driven rather than an animation, so it keeps real time even when the system animation
+ * scale is changed or animations are off. Not every frame either: the ring is a few dp across, so
+ * 20 updates a second look the same as 60-120 and cost a fraction of the redraws.
+ */
 private suspend fun countDown(durationMs: Long, onProgress: (Float) -> Unit) {
-    // Frame-driven rather than an animation, so it keeps real time even when the system
-    // animation scale is changed or animations are off.
-    val start = withFrameMillis { it }
+    val start = SystemClock.uptimeMillis()
     while (true) {
-        val elapsed = withFrameMillis { it } - start
+        val elapsed = SystemClock.uptimeMillis() - start
         if (elapsed >= durationMs) break
         onProgress(1f - elapsed.toFloat() / durationMs)
+        delay(TIMER_TICK_MS.coerceAtMost(durationMs - elapsed))
     }
     onProgress(0f)
+}
+
+private const val TIMER_TICK_MS = 50L
+
+/**
+ * [Modifier.blur] with the radius read while drawing rather than while composing. Animating
+ * Modifier.blur's radius recomposes the caller on every frame of the animation - for the hub's
+ * open/close that is the whole overlay - whereas this only redraws the layer. Matches
+ * Modifier.blur's defaults: clamped edges, clipped to bounds while blurring, no effect at 0.
+ */
+internal fun Modifier.deferredBlur(radius: () -> Dp): Modifier = graphicsLayer {
+    val radiusPx = radius().toPx()
+    if (radiusPx > 0f) {
+        renderEffect = BlurEffect(radiusPx, radiusPx, TileMode.Clamp)
+        clip = true
+    } else {
+        renderEffect = null
+        clip = false
+    }
 }
 
 /**

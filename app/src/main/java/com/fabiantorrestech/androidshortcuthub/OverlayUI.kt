@@ -120,7 +120,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1228,7 +1227,7 @@ internal fun OverlayContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .then(if (animEnabled) Modifier.graphicsLayer { alpha = animAlpha }.blur(animBlur) else Modifier)
+            .then(if (animEnabled) Modifier.graphicsLayer { alpha = animAlpha }.deferredBlur { animBlur } else Modifier)
             .pointerInput(sheetVisible) {
                 val edgeZonePx = 24.dp.toPx()
                 val sliderProtectionPaddingPx = 16.dp.toPx()
