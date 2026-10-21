@@ -174,6 +174,9 @@ internal object OverlayStateRepository {
         tile.customFontName?.let { put("customFontName", it) }
         tile.customTextScale?.let { put("customTextScale", it.toDouble()) }
         tile.customBoldText?.let { put("customBoldText", it) }
+        put("outlineEnabled", tile.outline.enabled)
+        put("outlineWidth", tile.outline.widthDp.toDouble())
+        put("outlineCornerRadius", tile.outline.cornerRadiusDp.toDouble())
         when (tile) {
             is AppTileState -> {
                 put("type", TILE_TYPE_APP)
@@ -264,6 +267,14 @@ internal object OverlayStateRepository {
             item.getDouble("customTextScale").toFloat().coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
         } else null
         val customBoldText = if (item.has("customBoldText")) item.getBoolean("customBoldText") else null
+        // Tiles saved before outlines existed take their type's default (on for widgets and stacks).
+        fun outline(enabledByDefault: Boolean) = TileOutline(
+            enabled = item.optBoolean("outlineEnabled", enabledByDefault),
+            widthDp = item.optDouble("outlineWidth", 2.0).toFloat()
+                .coerceIn(TileOutline.WIDTH_MIN, TileOutline.WIDTH_MAX),
+            cornerRadiusDp = item.optDouble("outlineCornerRadius", DEFAULT_TILE_CORNER_DP.toDouble()).toFloat()
+                .coerceIn(TileOutline.CORNER_MIN, TileOutline.CORNER_MAX),
+        )
 
         return when (item.optString("type", TILE_TYPE_APP)) {
             TILE_TYPE_WIDGET -> {
@@ -273,7 +284,7 @@ internal object OverlayStateRepository {
                 val dismissOnActivity = WidgetDismissMode.entries
                     .firstOrNull { it.name == item.optString("dismissOnActivity") }
                     ?: WidgetDismissMode.DEFAULT
-                WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel, dismissOnActivity)
+                WidgetTileState(id, row, column, rowSpan, columnSpan, appWidgetId, providerComponent, customLabel, dismissOnActivity, outline = outline(true))
             }
             TILE_TYPE_SYSTEM_SLIDER -> {
                 val sliderType = SliderType.entries.firstOrNull { it.name == item.optString("sliderType") } ?: return null
@@ -281,7 +292,7 @@ internal object OverlayStateRepository {
                 val singleStream = AudioStreamType.entries.firstOrNull { it.name == item.optString("singleStream", AudioStreamType.MUSIC.name) } ?: AudioStreamType.MUSIC
                 val buttonPlacement = SliderButtonPlacement.entries.firstOrNull { it.name == item.optString("buttonPlacement", SliderButtonPlacement.SPLIT.name) } ?: SliderButtonPlacement.SPLIT
                 val notchMode = SliderNotchMode.entries.firstOrNull { it.name == item.optString("notchMode", SliderNotchMode.LOCK_AND_SLIDE.name) } ?: SliderNotchMode.LOCK_AND_SLIDE
-                SystemSliderTileState(id, row, column, rowSpan, columnSpan, SystemSliderConfig(sliderType, streamMode, singleStream, buttonPlacement, notchMode, item.optBoolean("showNotches", true), item.optInt("buttonStepSize", 1), item.optBoolean("showOutline", false), item.optBoolean("buttonHapticsEnabled", false), item.optBoolean("notchHapticsEnabled", false)), customLabel)
+                SystemSliderTileState(id, row, column, rowSpan, columnSpan, SystemSliderConfig(sliderType, streamMode, singleStream, buttonPlacement, notchMode, item.optBoolean("showNotches", true), item.optInt("buttonStepSize", 1), item.optBoolean("showOutline", false), item.optBoolean("buttonHapticsEnabled", false), item.optBoolean("notchHapticsEnabled", false)), customLabel, outline = outline(false))
             }
             TILE_TYPE_INTENT -> {
                 val action = item.optString("intentAction").takeIf { it.isNotBlank() } ?: return null
@@ -289,7 +300,7 @@ internal object OverlayStateRepository {
                 val extrasObj = item.optJSONObject("intentExtras")
                 val extras = buildMap<String, String> { extrasObj?.keys()?.forEach { k -> put(k, extrasObj.getString(k)) } }
                 val unlockToLaunch = item.optBoolean("unlockToLaunch", false)
-                IntentTileState(id, row, column, rowSpan, columnSpan, action, intentType, item.optString("intentPackage").takeIf { it.isNotBlank() }, item.optString("intentComponent").takeIf { it.isNotBlank() }, item.optString("intentDataUri").takeIf { it.isNotBlank() }, extras, unlockToLaunch, customLabel, customFontUri, customFontName, customTextScale, customBoldText)
+                IntentTileState(id, row, column, rowSpan, columnSpan, action, intentType, item.optString("intentPackage").takeIf { it.isNotBlank() }, item.optString("intentComponent").takeIf { it.isNotBlank() }, item.optString("intentDataUri").takeIf { it.isNotBlank() }, extras, unlockToLaunch, customLabel, customFontUri, customFontName, customTextScale, customBoldText, outline = outline(false))
             }
             TILE_TYPE_SCROLLBOX -> {
                 val scrollDirection = ScrollDirection.entries.firstOrNull { it.name == item.optString("scrollDirection") } ?: ScrollDirection.VERTICAL
@@ -308,7 +319,7 @@ internal object OverlayStateRepository {
                     }
                 }
                 val nextChildId = item.optInt("nextChildId", children.maxOfOrNull { it.id + 1 } ?: 1)
-                ScrollBoxTileState(id, row, column, rowSpan, columnSpan, scrollDirection, scrollbarEdge, innerRows, innerColumns, children, nextChildId, customLabel)
+                ScrollBoxTileState(id, row, column, rowSpan, columnSpan, scrollDirection, scrollbarEdge, innerRows, innerColumns, children, nextChildId, customLabel, outline = outline(false))
             }
             TILE_TYPE_WIDGET_STACK -> {
                 val widgetArray = item.optJSONArray("widgets") ?: JSONArray()
@@ -324,14 +335,14 @@ internal object OverlayStateRepository {
                 val rotateOnOpen = item.optBoolean("rotateOnOpen", false)
                 val rotateOnOpenEvery = item.optInt("rotateOnOpenEvery", 1).coerceIn(1, 10)
                 val showRotateTimer = item.optBoolean("showRotateTimer", true)
-                WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel, rotateOnOpen, rotateOnOpenEvery, showRotateTimer)
+                WidgetStackTileState(id, row, column, rowSpan, columnSpan, widgets, showPageIndicator, autoRotate, autoRotateSeconds, customLabel, rotateOnOpen, rotateOnOpenEvery, showRotateTimer, outline = outline(true))
             }
             TILE_TYPE_APP -> {
                 val label = item.optString("label").takeIf { it.isNotBlank() } ?: return null
                 val component = item.optString("component").takeIf { it.isNotBlank() }?.let(ComponentName::unflattenFromString)
                 val launchIntentUri = item.optString("launchIntentUri").takeIf { it.isNotBlank() }
                 val launchIntentPackage = item.optString("launchIntentPackage").takeIf { it.isNotBlank() }
-                AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(label, component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText)
+                AppTileState(id, row, column, rowSpan, columnSpan, LaunchableApp(label, component, launchIntentUri, launchIntentPackage), parseAppTileIconConfig(item), customLabel, customFontUri, customFontName, customTextScale, customBoldText, outline = outline(false))
             }
             // An unrecognised type used to land in the app branch and blow up on getString("label").
             // Skip it instead, per this function's contract. Legacy v1 tiles are unaffected: the

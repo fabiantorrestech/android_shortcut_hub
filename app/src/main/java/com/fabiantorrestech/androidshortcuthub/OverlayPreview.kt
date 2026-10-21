@@ -19,6 +19,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -228,6 +229,9 @@ internal fun OverlayGridPreview(
             val tileBorderColor = when (mode) {
                 OverlayRenderMode.EditorPreview -> when {
                     isSelected -> MaterialTheme.colorScheme.primary
+                    // Marks tiles that get an outline at runtime, at a fixed width: the preview is
+                    // too small to show the real one.
+                    tile.outline.enabled -> MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                     else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
                 }
                 OverlayRenderMode.Runtime -> when {
@@ -305,6 +309,14 @@ internal fun OverlayGridPreview(
                 }
             }
 
+            // With an outline, the content is clipped to the outline's corners so the two line up.
+            val tileShape = RoundedCornerShape(
+                when {
+                    mode == OverlayRenderMode.EditorPreview -> 4.dp
+                    tile.outline.enabled -> tile.outline.cornerRadiusDp.dp
+                    else -> DEFAULT_TILE_CORNER_DP.dp
+                },
+            )
             Card(
                 modifier = tileModifier
                     .then(
@@ -319,13 +331,14 @@ internal fun OverlayGridPreview(
                     .border(
                         width = when {
                             isWidgetInEditMode || isSelected -> 2.dp
+                            mode == OverlayRenderMode.EditorPreview && tile.outline.enabled -> 1.5.dp
                             mode == OverlayRenderMode.EditorPreview -> 1.dp
                             else -> 0.dp
                         },
                         color = tileBorderColor,
-                        shape = RoundedCornerShape(if (mode == OverlayRenderMode.EditorPreview) 4.dp else 18.dp),
+                        shape = tileShape,
                     ),
-                shape = RoundedCornerShape(if (mode == OverlayRenderMode.EditorPreview) 4.dp else 18.dp),
+                shape = tileShape,
                 colors = CardDefaults.cardColors(containerColor = tileBackgroundColor),
             ) {
                 Surface(color = tileBackgroundColor) {
@@ -514,6 +527,12 @@ internal fun OverlayGridPreview(
                                     }
                                 }
                             }
+                        }
+                        // Runtime outline, on top of the content. A live widget stack draws its own so
+                        // it can fade between widgets whose outline settings differ.
+                        val stackDrawsOwnOutline = tile is WidgetStackTileState && !isMoveMode
+                        if (mode == OverlayRenderMode.Runtime && tile.outline.enabled && !stackDrawsOwnOutline) {
+                            TileOutlineOverlay(outline = tile.outline, modifier = Modifier.matchParentSize())
                         }
                     }
                 }
@@ -1220,6 +1239,13 @@ internal fun WidgetStackRuntimeContent(
                     ?.takeIf { widgets[page].shouldDismissOnActivity(dismissOnWidgetActivity) },
             )
         }
+        if (tile.outline.enabled) {
+            TileOutlineOverlay(
+                outline = tile.outline,
+                modifier = Modifier.matchParentSize(),
+                alpha = { stackOutlineAlpha(pagerState, widgets) },
+            )
+        }
         val showDots = tile.showPageIndicator && widgets.size > 1
         if (showDots || showTimer) {
             PageDots(
@@ -1233,6 +1259,38 @@ internal fun WidgetStackRuntimeContent(
             )
         }
     }
+}
+
+/**
+ * How much of the stack's outline shows at the pager's current position: each widget's outline
+ * setting counts fully while it is on screen, and mid-swipe the two widgets blend, so the outline
+ * fades in or out as you page onto a widget that has it on or off.
+ */
+private fun stackOutlineAlpha(pagerState: PagerState, widgets: List<WidgetTileState>): Float {
+    val position = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+        .coerceIn(0f, widgets.lastIndex.toFloat())
+    val from = position.toInt()
+    val to = (from + 1).coerceAtMost(widgets.lastIndex)
+    fun shown(index: Int) = if (widgets[index].outline.enabled) 1f else 0f
+    return shown(from) + (shown(to) - shown(from)) * (position - from)
+}
+
+/** Draws [outline] around its bounds in the accent color; [alpha] is read only while drawing. */
+@Composable
+internal fun TileOutlineOverlay(
+    outline: TileOutline,
+    modifier: Modifier = Modifier,
+    alpha: () -> Float = { 1f },
+) {
+    Box(
+        modifier = modifier
+            .graphicsLayer { this.alpha = alpha() }
+            .border(
+                width = outline.widthDp.dp,
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(outline.cornerRadiusDp.dp),
+            ),
+    )
 }
 
 /** Counts [durationMs] down frame by frame, reporting the remaining fraction from 1 to 0. */

@@ -180,6 +180,41 @@ internal sealed class TileState {
     abstract val customTextScale: Float?
     abstract val customBoldText: Boolean?
     abstract val displayLabel: String
+    abstract val outline: TileOutline
+}
+
+/**
+ * Accent-colored outline drawn around a tile at runtime, to make chosen tiles stand out. When it
+ * is on, the tile's content is clipped to the same [cornerRadiusDp] so the outline hugs it.
+ * Inside a widget stack, each widget's [enabled] decides whether the stack's outline shows while
+ * that widget is on screen; the stack's own width and radius are used.
+ */
+internal data class TileOutline(
+    val enabled: Boolean,
+    val widthDp: Float = 2f,
+    val cornerRadiusDp: Float = DEFAULT_TILE_CORNER_DP,
+) {
+    companion object {
+        /** Off for plain tiles; on for widgets and widget stacks. */
+        val OFF = TileOutline(enabled = false)
+        val ON = TileOutline(enabled = true)
+        const val WIDTH_MIN = 1f
+        const val WIDTH_MAX = 8f
+        const val CORNER_MIN = 0f
+        const val CORNER_MAX = 32f
+    }
+}
+
+/** The runtime tile corner radius, used when a tile has no outline. */
+internal const val DEFAULT_TILE_CORNER_DP = 18f
+
+internal fun TileState.copyWithOutline(outline: TileOutline): TileState = when (this) {
+    is AppTileState -> copy(outline = outline)
+    is IntentTileState -> copy(outline = outline)
+    is WidgetTileState -> copy(outline = outline)
+    is SystemSliderTileState -> copy(outline = outline)
+    is ScrollBoxTileState -> copy(outline = outline)
+    is WidgetStackTileState -> copy(outline = outline)
 }
 
 internal data class AppTileState(
@@ -195,6 +230,7 @@ internal data class AppTileState(
     override val customFontName: String? = null,
     override val customTextScale: Float? = null,
     override val customBoldText: Boolean? = null,
+    override val outline: TileOutline = TileOutline.OFF,
 ) : TileState() {
     override val displayLabel: String
         get() = customLabel?.takeIf { it.isNotBlank() } ?: app.label
@@ -235,6 +271,7 @@ internal data class IntentTileState(
     override val customFontName: String? = null,
     override val customTextScale: Float? = null,
     override val customBoldText: Boolean? = null,
+    override val outline: TileOutline = TileOutline.OFF,
 ) : TileState() {
     override val displayLabel: String
         get() = customLabel?.takeIf { it.isNotBlank() } ?: intentAction
@@ -326,6 +363,7 @@ internal data class SystemSliderTileState(
     override val columnSpan: Int = 1,
     val config: SystemSliderConfig,
     override val customLabel: String? = null,
+    override val outline: TileOutline = TileOutline.OFF,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null
@@ -449,6 +487,7 @@ internal data class WidgetTileState(
     val providerComponent: String,
     override val customLabel: String? = null,
     val dismissOnActivity: WidgetDismissMode = WidgetDismissMode.DEFAULT,
+    override val outline: TileOutline = TileOutline.ON,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null
@@ -483,6 +522,7 @@ internal data class ScrollBoxTileState(
     val children: List<TileState> = emptyList(),
     val nextChildId: Int = 1,
     override val customLabel: String? = null,
+    override val outline: TileOutline = TileOutline.OFF,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null
@@ -514,6 +554,7 @@ internal data class WidgetStackTileState(
     val rotateOnOpenEvery: Int = 1,
     /** Countdown ring beside the page dots while auto-rotate is on. */
     val showRotateTimer: Boolean = true,
+    override val outline: TileOutline = TileOutline.ON,
 ) : TileState() {
     override val customFontUri: String? = null
     override val customFontName: String? = null

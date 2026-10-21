@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.Flow
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.collectLatest
 
 /**
@@ -363,6 +365,13 @@ internal fun OverlayTileInspector(
                 }
             }
         }
+
+        // ── Outline ───────────────────────────────────────────────────────────
+        TileOutlineControls(
+            outline = tile.outline,
+            isStack = tile is WidgetStackTileState,
+            onChange = { outline -> editorState.updateTile(tile.id) { it.copyWithOutline(outline) } },
+        )
 
         // ── Delete ────────────────────────────────────────────────────────────
         // Confirmed, because deleting a container throws away everything inside it and there is no
@@ -719,5 +728,53 @@ private fun InlineIntentForm(
             ) { Text("Save") }
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
         }
+    }
+}
+
+/**
+ * On/off, thickness and corner radius for a tile's runtime outline. For a widget stack these set
+ * the stack's outline; whether it shows on each widget is chosen per widget in "Edit stack".
+ */
+@Composable
+private fun TileOutlineControls(
+    outline: TileOutline,
+    isStack: Boolean,
+    onChange: (TileOutline) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Outline", style = MaterialTheme.typography.bodyMedium)
+        Switch(checked = outline.enabled, onCheckedChange = { onChange(outline.copy(enabled = it)) })
+    }
+    if (!outline.enabled) return
+    Text(
+        "Thickness ${"%.1f".format(outline.widthDp)} dp",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Slider(
+        value = outline.widthDp,
+        onValueChange = { onChange(outline.copy(widthDp = (it * 2).roundToInt() / 2f)) },
+        valueRange = TileOutline.WIDTH_MIN..TileOutline.WIDTH_MAX,
+    )
+    Text(
+        if (outline.cornerRadiusDp == 0f) "Corners: square" else "Corners ${outline.cornerRadiusDp.roundToInt()} dp",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Slider(
+        value = outline.cornerRadiusDp,
+        onValueChange = { onChange(outline.copy(cornerRadiusDp = it.roundToInt().toFloat())) },
+        valueRange = TileOutline.CORNER_MIN..TileOutline.CORNER_MAX,
+    )
+    if (isStack) {
+        Text(
+            "Turn it off for individual widgets in \"Edit stack\"; it fades as you swipe between them.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

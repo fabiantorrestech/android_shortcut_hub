@@ -399,6 +399,19 @@ internal fun WidgetStackEditorScreen(
                                     )
                                 }
                                 HorizontalDivider()
+                                // Whether the stack's outline shows while this widget is on screen.
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(if (widget.outline.enabled) "●  Outline on this widget" else "○  Outline on this widget")
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        widgets[index] = widgets[index].copy(
+                                            outline = widgets[index].outline.copy(enabled = !widgets[index].outline.enabled),
+                                        )
+                                    },
+                                )
+                                HorizontalDivider()
                                 DropdownMenuItem(
                                     text = { Text("Remove") },
                                     onClick = {
