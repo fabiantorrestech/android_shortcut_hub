@@ -38,6 +38,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // A separate app next to the released one, signed with the same key (ADR 7 in android-apps).
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")

@@ -51,18 +51,23 @@ jobs:
             echo "ORG_GRADLE_PROJECT_PERSONAL_KEYSTORE_ALIAS=$KEYSTORE_ALIAS"
           } >> "$GITHUB_ENV"
 
-      - name: Build release APK
+      # Debug = the .debug app, signed with the same key, listed under "Debug builds" on the hub.
+      - name: Build release and debug APKs
         run: |
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --console=plain
+          ./gradlew :app:assembleRelease :app:assembleDebug --console=plain
 
-      - name: Name the APK
-        run: cp app/build/outputs/apk/release/*.apk ShortcutHub.apk
+      - name: Name the APKs
+        run: |
+          cp app/build/outputs/apk/release/*.apk ShortcutHub.apk
+          cp app/build/outputs/apk/debug/*.apk ShortcutHub-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: ShortcutHub-apk
-          path: ShortcutHub.apk
+          path: |
+            ShortcutHub.apk
+            ShortcutHub-debug.apk
           retention-days: 30
 
       - name: Publish to the app hub (fabiantorrestech/android-apps)
@@ -72,6 +77,7 @@ jobs:
           TAG: shortcuthub
           NAME: Shortcut Hub
           APK: ShortcutHub.apk
+          DEBUG_APK: ShortcutHub-debug.apk
         run: |
           if [ -z "$ORG_GRADLE_PROJECT_PERSONAL_KEYSTORE_FILE" ] || [ -z "$GH_TOKEN" ]; then
             echo "::warning::Release key or APP_HUB_TOKEN missing: not publishing to the hub"
@@ -84,8 +90,8 @@ jobs:
           title="$NAME $version ($code)"
           notes="Built by CI from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7} (${GITHUB_REF_NAME}) on $(date -u '+%Y-%m-%d %H:%M') UTC."
           if gh release view "$TAG" --repo "$HUB" > /dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --repo "$HUB" --clobber
+            gh release upload "$TAG" "$APK" "$DEBUG_APK" --repo "$HUB" --clobber
             gh release edit "$TAG" --repo "$HUB" --title "$title" --notes "$notes"
           else
-            gh release create "$TAG" "$APK" --repo "$HUB" --target main --title "$title" --notes "$notes" --latest=false
+            gh release create "$TAG" "$APK" "$DEBUG_APK" --repo "$HUB" --target main --title "$title" --notes "$notes" --latest=false
           fi
